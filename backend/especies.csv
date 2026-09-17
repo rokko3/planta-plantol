@@ -1,0 +1,11 @@
+especie,lux_min,lux_max,humedad_min,humedad_max,temperatura_min,temperatura_max
+Orquídea (Orchidaceae),1000,3000,50,70,18,28
+Helecho (Pteridophyta),500,2000,60,80,15,24
+Cactus (Cactaceae),5000,15000,10,30,18,35
+Girasol (Helianthus annuus),10000,25000,30,60,15,30
+Suculenta (Echeveria),3000,10000,20,40,18,32
+Tomate (Solanum lycopersicum),8000,20000,50,80,18,30
+Bonsái (Ficus retusa),3000,8000,40,60,15,28
+Aloe Vera (Aloe barbadensis),3000,10000,10,30,18,32
+Menta (Mentha spicata),2000,6000,50,70,15,25
+Lavanda (Lavandula angustifolia),4000,12000,30,50,10,28
