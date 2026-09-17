@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Diagnóstico de Salud Vegetal</title>
+    <meta name="description" content="Sistema de diagnóstico del estado de salud de plantas basado en parámetros ambientales.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="badge">Diagnóstico Ambiental</div>
+            <h1>Estado de Salud Vegetal</h1>
+            <p class="subtitle">Evalúa los parámetros ambientales de tu planta y obtén un diagnóstico completo</p>
+        </div>
+
+        <form id="evaluarForm" novalidate>
+            <!-- Especie: se puebla dinámicamente desde GET /api/especies -->
+            <div class="form-group">
+                <label for="especie">Especie <span class="unit-tag">(selecciona)</span></label>
+                <select id="especie" name="especie" required>
+                    <option value="" disabled selected>Cargando especies…</option>
+                </select>
+            </div>
+
+            <!-- Parámetros ambientales -->
+            <div class="form-group">
+                <div class="inputs-grid">
+                    <div>
+                        <label for="luminosidad">Luminosidad <span class="unit-tag">(lux)</span></label>
+                        <input type="number" step="any" id="luminosidad" name="luminosidad"
+                            placeholder="Ej. 5000" min="0" required>
+                    </div>
+                    <div>
+                        <label for="humedad">Humedad <span class="unit-tag">(%)</span></label>
+                        <input type="number" step="any" id="humedad" name="humedad"
+                            placeholder="Ej. 55" min="0" max="100" required>
+                    </div>
+                    <div>
+                        <label for="temperatura">Temperatura <span class="unit-tag">(°C)</span></label>
+                        <input type="number" step="any" id="temperatura" name="temperatura"
+                            placeholder="Ej. 22" required>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Rangos de la especie seleccionada (informativo) -->
+            <div class="rangos-info" id="rangosInfo" style="display:none;">
+                <strong>Rangos óptimos para <span id="rangosNombre"></span>:</strong>
+                <span id="rangosTexto"></span>
+            </div>
+
+            <button type="submit" class="submit-btn" id="btnEvaluar">
+                <span>Diagnosticar</span>
+                <span>➔</span>
+            </button>
+        </form>
+
+        <!-- Resultado del diagnóstico -->
+        <div class="result-card" id="resultCard" style="display:none;">
+            <div class="estado-header">
+                <div class="estado-label">Estado global</div>
+                <div class="estado-badge" id="estadoBadge">--</div>
+            </div>
+            <div class="parametros-grid" id="parametrosGrid"></div>
+        </div>
+
+        <!-- Mensaje de error -->
+        <div class="error-card" id="errorCard" style="display:none;">
+            <strong id="errorCodigo"></strong>
+            <p id="errorMensaje"></p>
+        </div>
+    </div>
+
+    <script src="controlador.js"></script>
+</body>
+
+</html>
