@@ -2,9 +2,9 @@
 
 Sistema de diagnóstico del estado de salud de plantas a partir de parámetros ambientales.  
 Proyecto para el curso de **Arquitectura de Software**.
-https://universidadsergioarboleda-my.sharepoint.com/:w:/g/personal/samuel_leyton01_usa_edu_co/IQChpExAxO_3QLbG8uVsoTSGAdlxTuKVkNLvemR7595eQrU?e=PfyCao
----
 
+---
+https://universidadsergioarboleda-my.sharepoint.com/:w:/g/personal/samuel_leyton01_usa_edu_co/IQChpExAxO_3QLbG8uVsoTSGAdlxTuKVkNLvemR7595eQrU?e=PfyCao
 ## Estructura del proyecto
 
 El proyecto está organizado en **exactamente 3 carpetas de código** a nivel raíz, preservando la separación de capas a nivel de módulos:
