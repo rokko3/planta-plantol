@@ -1,22 +1,24 @@
+# Capa: aplicación
 """
-Caso de uso: EvaluarPlanta
+Caso de uso: EvaluarPlanta (Capa de Aplicación).
 
 Orquesta los servicios de dominio para producir un diagnóstico completo.
-Depende solo de la interfaz IRepositorioEspecies (RA5/DIP).
-No importa Flask ni infraestructura concreta.
+Depende únicamente del puerto IRepositorioEspecies (RA5 / DIP).
+NUNCA importa repositorio_csv.py directamente (se le inyecta en el constructor).
+No importa Flask, pandas, csv ni infraestructura concreta.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from dominio.entidades import DiagnosticoPlanta
-from dominio.puertos import IRepositorioEspecies
-from dominio.servicios.agregador import AgregarEstado
-from dominio.servicios.clasificador import ClasificadorParametro
+from Modelo.entidades import DiagnosticoPlanta
+from Modelo.puertos import IRepositorioEspecies
+from Modelo.agregador import AgregarEstado
+from Modelo.clasificador import ClasificadorParametro
 
 
 # ---------------------------------------------------------------------------
-# DTO de entrada (RA6) — objeto tipado, no dict crudo
+# DTO de entrada al caso de uso (RA6) — objeto tipado inmutable
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -55,7 +57,7 @@ class EvaluarPlanta:
 
 
 class EspecieNoSoportadaError(ValueError):
-    """Se lanza cuando la especie solicitada no está en la tabla de referencia."""
+    """Se lanza cuando la especie solicitada no existe en la tabla de referencia (RF6)."""
 
     def __init__(self, especie: str) -> None:
         self.especie = especie

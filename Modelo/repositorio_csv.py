@@ -1,10 +1,10 @@
+# Capa: infraestructura
 """
-RepositorioEspeciesCSV — implementación concreta del puerto IRepositorioEspecies.
+RepositorioEspeciesCSV — implementación concreta del puerto IRepositorioEspecies (RA5).
 
-Lee el CSV de rangos y devuelve objetos de dominio (RangosEspecie).
-El dominio no sabe que los datos vienen de un CSV.
-
-pandas/csv son aceptables aquí (infraestructura); NO deben llegar al dominio.
+Lee el archivo CSV de rangos de especies y devuelve entidades de dominio (RangosEspecie).
+Es el único módulo en Modelo/ autorizado para importar csv/IO de persistencia.
+El dominio desconoce que los datos provienen de un archivo CSV.
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import csv
 import os
 from typing import Dict, List, Optional
 
-from dominio.entidades import RangosEspecie
+from Modelo.entidades import RangosEspecie
 
 
 class RepositorioEspeciesCSV:
@@ -23,7 +23,7 @@ class RepositorioEspeciesCSV:
         self._cache: Optional[Dict[str, RangosEspecie]] = None
 
     # ------------------------------------------------------------------
-    # Puerto público
+    # Puerto público (satisface IRepositorioEspecies)
     # ------------------------------------------------------------------
 
     def obtener_rangos(self, especie: str) -> Optional[RangosEspecie]:
@@ -33,7 +33,7 @@ class RepositorioEspeciesCSV:
         return list(self._indice().values())
 
     # ------------------------------------------------------------------
-    # Internos
+    # Métodos internos de carga y cache
     # ------------------------------------------------------------------
 
     def _indice(self) -> Dict[str, RangosEspecie]:

@@ -1,19 +1,23 @@
+# Capa: dominio
 """
-ClasificadorParametro — servicio de dominio.
+ClasificadorParametro — servicio de dominio (RF2, RF4).
 
 Clasifica un valor numérico individual como BAJO, OPTIMO o ALTO
 dado un rango [min, max] específico de la especie.
+Asocia recomendaciones textuales específicas cuando el valor sale del rango óptimo.
 
-Reglas:
+Reglas de clasificación (RF2):
   valor < min                         → BAJO
   min <= valor <= max                 → OPTIMO
   valor > max                         → ALTO
 
-No importa nada de infraestructura, Flask, pandas ni numpy.
+No importa nada de infraestructura, Flask, pandas, csv ni requests.
 """
 from __future__ import annotations
 
-from dominio.entidades import (
+from typing import List
+
+from Modelo.entidades import (
     ALTO,
     BAJO,
     OPTIMO,
@@ -23,10 +27,9 @@ from dominio.entidades import (
 
 
 # ---------------------------------------------------------------------------
-# Definición de los parámetros evaluables (OCP: iterable, no hardcodeado)
+# Definición de los parámetros evaluables (OCP: extensible sin modificar el core)
+# Cada tupla: (nombre_campo, min_attr, max_attr, unidad, reco_bajo, reco_alto)
 # ---------------------------------------------------------------------------
-
-# Cada entrada: (nombre_campo, min_attr, max_attr, unidad, reco_bajo, reco_alto)
 PARAMETROS_EVALUABLES = [
     (
         "luminosidad",
@@ -90,7 +93,7 @@ class ClasificadorParametro:
 
     def clasificar_todos(
         self, rangos: RangosEspecie, **valores: float
-    ) -> list[ResultadoParametro]:
+    ) -> List[ResultadoParametro]:
         """
         Itera sobre PARAMETROS_EVALUABLES (OCP: agregar un parámetro =
         agregar una entrada a la lista, sin tocar esta función).

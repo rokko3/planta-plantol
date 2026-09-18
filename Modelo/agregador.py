@@ -1,21 +1,21 @@
+# Capa: dominio
 """
-AgregarEstado — servicio de dominio.
+AgregarEstado — servicio de dominio (RF3).
 
-Regla de agregación explícita (sin ML, sin estadística):
-
+Regla de agregación explícita (determinista, sin ML, sin estadística):
   TODOS los parámetros son OPTIMO                  → SALUDABLE
   Exactamente 1 parámetro fuera de rango           → EN_RIESGO
   2 o más parámetros fuera de rango                → CRITICO
 
-"Fuera de rango" = clasificación BAJO o ALTO.
+"Fuera de rango" = clasificación individual BAJO o ALTO.
 
-No importa nada de infraestructura, Flask, pandas ni numpy.
+No importa nada de infraestructura, Flask, pandas, csv ni requests.
 """
 from __future__ import annotations
 
 from typing import List
 
-from dominio.entidades import (
+from Modelo.entidades import (
     CRITICO,
     EN_RIESGO,
     OPTIMO,
@@ -26,7 +26,7 @@ from dominio.entidades import (
 
 
 class AgregarEstado:
-    """Deriva el estado global a partir de los resultados individuales."""
+    """Deriva el estado global de salud a partir de los resultados individuales."""
 
     def agregar(
         self, especie: str, resultados: List[ResultadoParametro]

@@ -1,26 +1,40 @@
 """
-Pruebas unitarias del dominio.
+Pruebas unitarias del dominio (tests/test_dominio.py).
 
-- No importan Flask.
-- No leen el CSV real.
-- Usan FakeRepositorio como doble de prueba (implementa IRepositorioEspecies).
-- Cubren: clasificación por parámetro, agregación de estado global,
-  recomendaciones, casos límite y error de especie no soportada.
+- No importan Flask ni librerías HTTP.
+- No leen el CSV real en disco.
+- Usan FakeRepositorio como doble de prueba en memoria (implementa IRepositorioEspecies).
+- Cubren: clasificación individual por parámetro (RF2), agregación de estado global (RF3),
+  recomendaciones textuales (RF4), casos límite y error de especie no soportada (RF6).
+- Verifican LSP y DIP (RA5).
 """
-import sys
 import os
+import sys
 import unittest
 
-# Ajuste de path para que Python encuentre el paquete dominio/
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+# Ajuste de path para importar el paquete Modelo desde la raíz
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
 
-from dominio.entidades import (
-    ALTO, BAJO, CRITICO, EN_RIESGO, OPTIMO, SALUDABLE,
-    RangosEspecie, ResultadoParametro,
+from Modelo.entidades import (
+    ALTO,
+    BAJO,
+    CRITICO,
+    EN_RIESGO,
+    OPTIMO,
+    SALUDABLE,
+    RangosEspecie,
+    ResultadoParametro,
 )
-from dominio.servicios.clasificador import ClasificadorParametro
-from dominio.servicios.agregador import AgregarEstado
-from aplicacion.evaluar_planta import EvaluarPlanta, SolicitudDiagnostico, EspecieNoSoportadaError
+from Modelo.clasificador import ClasificadorParametro
+from Modelo.agregador import AgregarEstado
+from Modelo.evaluar_planta import (
+    EspecieNoSoportadaError,
+    EvaluarPlanta,
+    SolicitudDiagnostico,
+)
+from Modelo.puertos import IRepositorioEspecies
 
 
 # ---------------------------------------------------------------------------
@@ -43,14 +57,14 @@ ORQUIDEA = RangosEspecie(
 
 
 class FakeRepositorio:
-    """Doble de prueba de IRepositorioEspecies."""
+    """Doble de prueba de IRepositorioEspecies en memoria (DIP / LSP)."""
 
     _datos = {
         "cactus (cactaceae)": CACTUS,
         "orquídea (orchidaceae)": ORQUIDEA,
     }
 
-    def obtener_rangos(self, especie):
+    def obtener_rangos(self, especie: str):
         return self._datos.get(especie.strip().lower())
 
     def listar_especies(self):
@@ -62,13 +76,13 @@ class FakeRepositorio:
 # ---------------------------------------------------------------------------
 
 class TestClasificadorParametro(unittest.TestCase):
-    """Prueba la clasificación individual de parámetros (RF2)."""
+    """Prueba la clasificación individual de parámetros (RF2, RF4)."""
 
     def setUp(self):
         self.clf = ClasificadorParametro()
         self.rangos = CACTUS
 
-    # Test 1 — valor en rango óptimo
+    # Test 1 — valor dentro del rango óptimo
     def test_clasificacion_optimo(self):
         resultado = self.clf.clasificar_todos(
             self.rangos, luminosidad=10000, humedad=20, temperatura=25
@@ -78,7 +92,7 @@ class TestClasificadorParametro(unittest.TestCase):
         self.assertEqual(cls_map["humedad"], OPTIMO)
         self.assertEqual(cls_map["temperatura"], OPTIMO)
 
-    # Test 2 — valor por debajo del mínimo
+    # Test 2 — valor por debajo del mínimo (BAJO)
     def test_clasificacion_bajo(self):
         resultado = self.clf.clasificar_todos(
             self.rangos, luminosidad=100, humedad=20, temperatura=25
@@ -86,7 +100,7 @@ class TestClasificadorParametro(unittest.TestCase):
         lux = next(r for r in resultado if r.nombre == "luminosidad")
         self.assertEqual(lux.clasificacion, BAJO)
 
-    # Test 3 — valor por encima del máximo
+    # Test 3 — valor por encima del máximo (ALTO)
     def test_clasificacion_alto(self):
         resultado = self.clf.clasificar_todos(
             self.rangos, luminosidad=20000, humedad=20, temperatura=25
@@ -102,7 +116,7 @@ class TestClasificadorParametro(unittest.TestCase):
         lux = next(r for r in resultado if r.nombre == "luminosidad")
         self.assertNotEqual(lux.recomendacion, "")
 
-    # Test 5 — recomendación vacía cuando OPTIMO (RF4 complementario)
+    # Test 5 — recomendación vacía cuando OPTIMO (RF4)
     def test_recomendacion_vacia_cuando_optimo(self):
         resultado = self.clf.clasificar_todos(
             self.rangos, luminosidad=10000, humedad=20, temperatura=25
@@ -134,7 +148,7 @@ class TestClasificadorParametro(unittest.TestCase):
 
 
 class TestAgregarEstado(unittest.TestCase):
-    """Prueba la regla de agregación de estado global (RF3)."""
+    """Prueba la regla determinista de agregación de estado global (RF3)."""
 
     def setUp(self):
         self.agg = AgregarEstado()
@@ -144,36 +158,52 @@ class TestAgregarEstado(unittest.TestCase):
 
     # Test 8 — todos OPTIMO → SALUDABLE
     def test_todos_optimo_es_saludable(self):
-        resultados = [self._r("luminosidad", OPTIMO), self._r("humedad", OPTIMO), self._r("temperatura", OPTIMO)]
+        resultados = [
+            self._r("luminosidad", OPTIMO),
+            self._r("humedad", OPTIMO),
+            self._r("temperatura", OPTIMO),
+        ]
         diag = self.agg.agregar("Cactus", resultados)
         self.assertEqual(diag.estado_global, SALUDABLE)
 
-    # Test 9 — uno fuera de rango → EN_RIESGO
+    # Test 9 — exactamente 1 fuera de rango → EN_RIESGO
     def test_uno_fuera_es_en_riesgo(self):
-        resultados = [self._r("luminosidad", BAJO), self._r("humedad", OPTIMO), self._r("temperatura", OPTIMO)]
+        resultados = [
+            self._r("luminosidad", BAJO),
+            self._r("humedad", OPTIMO),
+            self._r("temperatura", OPTIMO),
+        ]
         diag = self.agg.agregar("Cactus", resultados)
         self.assertEqual(diag.estado_global, EN_RIESGO)
 
-    # Test 10 — dos fuera de rango → CRITICO
+    # Test 10 — 2 parámetros fuera de rango → CRITICO
     def test_dos_fuera_es_critico(self):
-        resultados = [self._r("luminosidad", BAJO), self._r("humedad", ALTO), self._r("temperatura", OPTIMO)]
+        resultados = [
+            self._r("luminosidad", BAJO),
+            self._r("humedad", ALTO),
+            self._r("temperatura", OPTIMO),
+        ]
         diag = self.agg.agregar("Cactus", resultados)
         self.assertEqual(diag.estado_global, CRITICO)
 
-    # Test 11 — tres fuera de rango → CRITICO
+    # Test 11 — 3 parámetros fuera de rango → CRITICO
     def test_tres_fuera_es_critico(self):
-        resultados = [self._r("luminosidad", BAJO), self._r("humedad", ALTO), self._r("temperatura", BAJO)]
+        resultados = [
+            self._r("luminosidad", BAJO),
+            self._r("humedad", ALTO),
+            self._r("temperatura", BAJO),
+        ]
         diag = self.agg.agregar("Cactus", resultados)
         self.assertEqual(diag.estado_global, CRITICO)
 
 
 class TestEvaluarPlanta(unittest.TestCase):
-    """Prueba el caso de uso completo con doble de repositorio (RA5/DIP)."""
+    """Prueba el caso de uso completo con doble de repositorio (RA5 / DIP)."""
 
     def setUp(self):
         self.caso = EvaluarPlanta(FakeRepositorio())
 
-    # Test 12 — diagnóstico completo con especie conocida
+    # Test 12 — diagnóstico exitoso con especie soportada
     def test_diagnostico_con_especie_valida(self):
         sol = SolicitudDiagnostico(
             especie="Cactus (Cactaceae)",
@@ -184,19 +214,18 @@ class TestEvaluarPlanta(unittest.TestCase):
         self.assertEqual(diag.estado_global, SALUDABLE)
         self.assertEqual(len(diag.parametros), 3)
 
-    # Test 13 — especie no soportada lanza EspecieNoSoportadaError (RF6)
+    # Test 13 — especie desconocida lanza EspecieNoSoportadaError (RF6)
     def test_especie_desconocida_lanza_error(self):
         sol = SolicitudDiagnostico(
-            especie="Planta Inventada",
+            especie="Planta Fantasma",
             luminosidad=500, humedad=50, temperatura=22
         )
         with self.assertRaises(EspecieNoSoportadaError) as ctx:
             self.caso.ejecutar(sol)
-        self.assertEqual(ctx.exception.especie, "Planta Inventada")
+        self.assertEqual(ctx.exception.especie, "Planta Fantasma")
 
-    # Test 14 — LSP: FakeRepositorio es sustituible por el repositorio real
+    # Test 14 — LSP: FakeRepositorio satisface IRepositorioEspecies
     def test_fake_repositorio_satisface_protocolo(self):
-        from dominio.puertos import IRepositorioEspecies
         repo = FakeRepositorio()
         self.assertIsInstance(repo, IRepositorioEspecies)
 

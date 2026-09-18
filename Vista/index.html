@@ -21,7 +21,7 @@
         </div>
 
         <form id="evaluarForm" novalidate>
-            <!-- Especie: se puebla dinámicamente desde GET /api/especies -->
+            <!-- Especie: se puebla dinámicamente desde GET /api/especies (RF5) -->
             <div class="form-group">
                 <label for="especie">Especie <span class="unit-tag">(selecciona)</span></label>
                 <select id="especie" name="especie" required>
@@ -29,7 +29,7 @@
                 </select>
             </div>
 
-            <!-- Parámetros ambientales -->
+            <!-- Parámetros ambientales (RF1) -->
             <div class="form-group">
                 <div class="inputs-grid">
                     <div>
@@ -50,7 +50,7 @@
                 </div>
             </div>
 
-            <!-- Rangos de la especie seleccionada (informativo) -->
+            <!-- Rangos de la especie seleccionada (referencia interactiva) -->
             <div class="rangos-info" id="rangosInfo" style="display:none;">
                 <strong>Rangos óptimos para <span id="rangosNombre"></span>:</strong>
                 <span id="rangosTexto"></span>
@@ -62,7 +62,7 @@
             </button>
         </form>
 
-        <!-- Resultado del diagnóstico -->
+        <!-- Resultado del diagnóstico (RF2, RF3, RF4) -->
         <div class="result-card" id="resultCard" style="display:none;">
             <div class="estado-header">
                 <div class="estado-label">Estado global</div>
@@ -71,14 +71,15 @@
             <div class="parametros-grid" id="parametrosGrid"></div>
         </div>
 
-        <!-- Mensaje de error -->
+        <!-- Mensaje de error estructurado (RF6) -->
         <div class="error-card" id="errorCard" style="display:none;">
             <strong id="errorCodigo"></strong>
             <p id="errorMensaje"></p>
         </div>
     </div>
 
-    <script src="controlador.js"></script>
+    <!-- Script del cliente ubicado en Controlador/controlador.js (RA2) -->
+    <script src="../Controlador/controlador.js"></script>
 </body>
 
 </html>

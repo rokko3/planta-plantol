@@ -1,6 +1,7 @@
+# Capa: dominio
 """
-Entidades del dominio.
-No importa nada de infraestructura, Flask, pandas ni numpy.
+Entidades y Value Objects del dominio.
+No importa nada de infraestructura, Flask, pandas, csv ni requests.
 """
 from __future__ import annotations
 
@@ -9,12 +10,16 @@ from typing import List
 
 
 # ---------------------------------------------------------------------------
-# Clasificación de un parámetro individual
+# Clasificación de un parámetro individual (RF2)
 # ---------------------------------------------------------------------------
 
 BAJO = "BAJO"
 OPTIMO = "OPTIMO"
 ALTO = "ALTO"
+
+# ---------------------------------------------------------------------------
+# Estado global de salud de la planta (RF3)
+# ---------------------------------------------------------------------------
 
 SALUDABLE = "SALUDABLE"
 EN_RIESGO = "EN_RIESGO"
@@ -36,17 +41,17 @@ class RangosEspecie:
 
 @dataclass(frozen=True)
 class ResultadoParametro:
-    """Resultado de la evaluación de UN parámetro ambiental."""
+    """Resultado de la evaluación de UN parámetro ambiental (RF2, RF4)."""
 
     nombre: str          # "luminosidad" | "humedad" | "temperatura"
     valor: float
     clasificacion: str   # BAJO | OPTIMO | ALTO
-    recomendacion: str   # texto vacío si OPTIMO
+    recomendacion: str   # texto con recomendación si fuera de rango, o vacío si OPTIMO
 
 
 @dataclass(frozen=True)
 class DiagnosticoPlanta:
-    """Resultado completo del diagnóstico para una planta."""
+    """Resultado completo del diagnóstico para una planta (RF1-RF4)."""
 
     especie: str
     estado_global: str                        # SALUDABLE | EN_RIESGO | CRITICO

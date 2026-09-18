@@ -1,6 +1,6 @@
-// controlador.js — Frontend independiente
-// Consume la API en http://127.0.0.1:5000 (backend Flask) via fetch/async.
-// Sin Jinja2, sin recarga de página completa. (RA2)
+// controlador.js — Controlador del cliente (Frontend)
+// Consume la API en http://127.0.0.1:5000 (backend Flask) vía fetch/async.
+// Sin recarga de página completa (RA2).
 
 const API_BASE = "http://127.0.0.1:5000";
 
@@ -37,7 +37,10 @@ function mostrarRangos(select) {
     const rangosTexto = document.getElementById("rangosTexto");
 
     const opt = select.options[select.selectedIndex];
-    if (!opt || !opt.dataset.rangos) { rangosInfo.style.display = "none"; return; }
+    if (!opt || !opt.dataset.rangos) {
+        rangosInfo.style.display = "none";
+        return;
+    }
 
     const r = JSON.parse(opt.dataset.rangos);
     rangosNombre.textContent = opt.value;
@@ -89,7 +92,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 mostrarError(data);
             }
         } catch (err) {
-            mostrarError({ error: "ERROR_RED", mensaje: "No se pudo comunicar con el servidor. Verifica que el backend esté corriendo." });
+            mostrarError({
+                error: "ERROR_RED",
+                mensaje: "No se pudo comunicar con el servidor. Verifica que el backend Flask esté corriendo en http://127.0.0.1:5000.",
+            });
         } finally {
             btn.disabled = false;
         }

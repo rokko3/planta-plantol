@@ -1,48 +1,47 @@
 """
-app.py — punto de entrada Flask.
+app.py — Punto de entrada del backend Flask (Controlador / Presentación).
 
-IMPORTANTE: este archivo NO genera HTML (RA1).
-Todas las rutas devuelven exclusivamente JSON.
-El frontend es servido por separado (RA2).
+IMPORTANTE (RA1): Este archivo responde EXCLUSIVAMENTE con JSON.
+No usa render_template ni genera HTML.
+El frontend se sirve por separado desde un origen estático (RA2).
 """
 from __future__ import annotations
 
 import os
 import sys
 
-# ---------------------------------------------------------------------------
-# Ajuste de path para importaciones relativas al directorio 'backend/'
-# ---------------------------------------------------------------------------
-BACKEND_DIR = os.path.dirname(os.path.dirname(__file__))  # .../planta-plantol/backend
-sys.path.insert(0, BACKEND_DIR)
+# Ajuste de path para importar paquetes raíz (Modelo, Controlador)
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-from aplicacion.evaluar_planta import EspecieNoSoportadaError, EvaluarPlanta, SolicitudDiagnostico
-from infraestructura.repositorio_csv import RepositorioEspeciesCSV
-from presentacion.dtos import ErrorValidacion, parsear_solicitud
+from Modelo.evaluar_planta import EspecieNoSoportadaError, EvaluarPlanta, SolicitudDiagnostico
+from Modelo.repositorio_csv import RepositorioEspeciesCSV
+from Controlador.dtos import ErrorValidacion, parsear_solicitud
 
 # ---------------------------------------------------------------------------
 # Inicialización de la aplicación y dependencias
 # ---------------------------------------------------------------------------
 app = Flask(__name__)
 
-# RA7: CORS para que el front servido en otro origen pueda consumir la API
+# RA7: CORS habilitado para que el frontend en otro origen consuma la API
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-ESPECIES_CSV = os.path.join(BACKEND_DIR, "especies.csv")
+ESPECIES_CSV = os.path.join(ROOT_DIR, "Modelo", "especies.csv")
 repositorio = RepositorioEspeciesCSV(ESPECIES_CSV)
 caso_uso = EvaluarPlanta(repositorio)
 
 
 # ---------------------------------------------------------------------------
-# Rutas — solo JSON, nunca render_template (RA1)
+# Endpoints de la API — Solo JSON (RA1)
 # ---------------------------------------------------------------------------
 
 @app.route("/api/especies", methods=["GET"])
 def listar_especies():
-    """RF5: devuelve la lista de especies soportadas y sus rangos."""
+    """RF5: Devuelve la lista de especies soportadas y sus rangos óptimos."""
     especies = repositorio.listar_especies()
     return jsonify(
         [
@@ -61,10 +60,10 @@ def listar_especies():
 
 @app.route("/api/diagnostico", methods=["POST"])
 def diagnostico():
-    """RF1-RF4: recibe parámetros, devuelve diagnóstico completo con recomendaciones."""
+    """RF1-RF4: Recibe parámetros, valida y retorna diagnóstico con recomendaciones."""
     payload = request.get_json(silent=True) or {}
 
-    # RA6: parsear transforma el dict crudo en datos validados antes del caso de uso
+    # RA6: parsear transforma el dict crudo en valores validados antes del caso de uso
     try:
         especie, lux, humedad, temperatura = parsear_solicitud(payload)
     except ErrorValidacion as exc:
@@ -95,12 +94,14 @@ def diagnostico():
 
 
 # ---------------------------------------------------------------------------
-# Arranque
+# Arranque directo
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     print("=" * 60)
-    print("   BACKEND — Evaluador de Estado de Salud Vegetal")
+    print("   CONTROLADOR BACKEND — Planta-Plantol")
     print("   API disponible en: http://127.0.0.1:5000")
-    print("   Front: sirve frontend/ con 'python -m http.server 8080'")
+    print("   Endpoints:")
+    print("     GET  /api/especies")
+    print("     POST /api/diagnostico")
     print("=" * 60)
     app.run(debug=True, port=5000)
