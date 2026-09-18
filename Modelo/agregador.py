@@ -1,16 +1,4 @@
 # Capa: dominio
-"""
-AgregarEstado — servicio de dominio (RF3).
-
-Regla de agregación explícita (determinista, sin ML, sin estadística):
-  TODOS los parámetros son OPTIMO                  → SALUDABLE
-  Exactamente 1 parámetro fuera de rango           → EN_RIESGO
-  2 o más parámetros fuera de rango                → CRITICO
-
-"Fuera de rango" = clasificación individual BAJO o ALTO.
-
-No importa nada de infraestructura, Flask, pandas, csv ni requests.
-"""
 from __future__ import annotations
 
 from typing import List
@@ -39,6 +27,7 @@ class AgregarEstado:
         elif n == 1:
             estado = EN_RIESGO
         else:
+            # Dos o mas parametros anomalos comprometen severamente la viabilidad de la planta
             estado = CRITICO
 
         return DiagnosticoPlanta(

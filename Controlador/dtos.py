@@ -1,26 +1,18 @@
-"""
-DTOs y validación de entrada para la capa de presentación/controlador.
-
-Transforma el dict crudo del request HTTP en datos validados y tipados
-antes de que lleguen al caso de uso (RA6).
-Maneja de forma estructurada los errores requeridos por RF6.
-"""
+"""Validación de entrada y normalización del payload JSON."""
 from __future__ import annotations
 
 from typing import Dict, Optional, Tuple
 
-# Límites físicos razonables para validación (RF6)
+# Umbrales fisicos extremos para descartar lecturas de sensores danados o corruptos
 HUMEDAD_MIN_FISICA = 0.0
 HUMEDAD_MAX_FISICA = 100.0
-TEMPERATURA_MIN_FISICA = -89.0   # récord histórico más frío en la Tierra
-TEMPERATURA_MAX_FISICA = 60.0    # límite superior razonable para plantas
+TEMPERATURA_MIN_FISICA = -89.0   # Record historico terrestre
+TEMPERATURA_MAX_FISICA = 60.0    # Limite fisiologico maximo para vegetacion
 LUX_MIN_FISICA = 0.0
-LUX_MAX_FISICA = 120_000.0       # luz solar directa máxima en ecuador ≈ 100 000 lux
+LUX_MAX_FISICA = 120_000.0       # Radiacion solar directa cenital
 
 
 class ErrorValidacion(ValueError):
-    """Error de validación de entrada con código y detalle estructurado (RF6)."""
-
     def __init__(self, codigo: str, mensaje: str, detalle: Optional[Dict] = None) -> None:
         self.codigo = codigo
         self.mensaje = mensaje
@@ -36,15 +28,6 @@ class ErrorValidacion(ValueError):
 
 
 def parsear_solicitud(datos: dict) -> Tuple[str, float, float, float]:
-    """
-    Valida y extrae los campos del payload JSON recibido.
-    Lanza ErrorValidacion para cada caso requerido por RF6:
-      - parámetro ausente
-      - valor no numérico
-      - valor fuera de rango físicamente posible
-    Devuelve (especie, luminosidad, humedad, temperatura).
-    """
-    # 1. Parámetros ausentes
     campos_requeridos = ("especie", "luminosidad", "humedad", "temperatura")
     faltantes = [c for c in campos_requeridos if datos.get(c) is None]
     if faltantes:
@@ -61,7 +44,6 @@ def parsear_solicitud(datos: dict) -> Tuple[str, float, float, float]:
             mensaje="El campo 'especie' no puede estar vacío.",
         )
 
-    # 2. Valores no numéricos
     numericos = {}
     for campo in ("luminosidad", "humedad", "temperatura"):
         try:
@@ -73,7 +55,6 @@ def parsear_solicitud(datos: dict) -> Tuple[str, float, float, float]:
                 detalle={"campo": campo, "valor_recibido": str(datos[campo])},
             )
 
-    # 3. Rangos físicamente posibles
     limites = {
         "luminosidad": (LUX_MIN_FISICA, LUX_MAX_FISICA, "lux"),
         "humedad": (HUMEDAD_MIN_FISICA, HUMEDAD_MAX_FISICA, "%"),

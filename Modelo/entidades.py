@@ -1,25 +1,12 @@
 # Capa: dominio
-"""
-Entidades y Value Objects del dominio.
-No importa nada de infraestructura, Flask, pandas, csv ni requests.
-"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import List
 
-
-# ---------------------------------------------------------------------------
-# Clasificación de un parámetro individual (RF2)
-# ---------------------------------------------------------------------------
-
 BAJO = "BAJO"
 OPTIMO = "OPTIMO"
 ALTO = "ALTO"
-
-# ---------------------------------------------------------------------------
-# Estado global de salud de la planta (RF3)
-# ---------------------------------------------------------------------------
 
 SALUDABLE = "SALUDABLE"
 EN_RIESGO = "EN_RIESGO"
@@ -28,8 +15,7 @@ CRITICO = "CRITICO"
 
 @dataclass(frozen=True)
 class RangosEspecie:
-    """Límites óptimos (min/max) para cada parámetro ambiental de una especie."""
-
+    """Rangos optimos de luminosidad, humedad y temperatura por especie."""
     nombre: str
     lux_min: float
     lux_max: float
@@ -41,20 +27,18 @@ class RangosEspecie:
 
 @dataclass(frozen=True)
 class ResultadoParametro:
-    """Resultado de la evaluación de UN parámetro ambiental (RF2, RF4)."""
-
-    nombre: str          # "luminosidad" | "humedad" | "temperatura"
+    """Evaluacion individual de un parametro ambiental."""
+    nombre: str
     valor: float
-    clasificacion: str   # BAJO | OPTIMO | ALTO
-    recomendacion: str   # texto con recomendación si fuera de rango, o vacío si OPTIMO
+    clasificacion: str
+    recomendacion: str
 
 
 @dataclass(frozen=True)
 class DiagnosticoPlanta:
-    """Resultado completo del diagnóstico para una planta (RF1-RF4)."""
-
+    """Diagnostico consolidado del estado de salud de una planta."""
     especie: str
-    estado_global: str                        # SALUDABLE | EN_RIESGO | CRITICO
+    estado_global: str
     parametros: List[ResultadoParametro] = field(default_factory=list)
 
     def to_dict(self) -> dict:

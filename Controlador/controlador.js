@@ -1,12 +1,5 @@
-// controlador.js — Controlador del cliente (Frontend)
-// Consume la API en http://127.0.0.1:5000 (backend Flask) vía fetch/async.
-// Sin recarga de página completa (RA2).
-
 const API_BASE = "http://127.0.0.1:5000";
 
-// ---------------------------------------------------------------------------
-// Inicialización: cargar especies desde GET /api/especies (RF5)
-// ---------------------------------------------------------------------------
 async function cargarEspecies() {
     const select = document.getElementById("especie");
     try {
@@ -28,9 +21,6 @@ async function cargarEspecies() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Al cambiar especie: mostrar rangos óptimos como referencia
-// ---------------------------------------------------------------------------
 function mostrarRangos(select) {
     const rangosInfo = document.getElementById("rangosInfo");
     const rangosNombre = document.getElementById("rangosNombre");
@@ -51,9 +41,6 @@ function mostrarRangos(select) {
     rangosInfo.style.display = "block";
 }
 
-// ---------------------------------------------------------------------------
-// Envío del formulario → POST /api/diagnostico
-// ---------------------------------------------------------------------------
 document.addEventListener("DOMContentLoaded", () => {
     cargarEspecies();
 
@@ -65,7 +52,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const errorCard = document.getElementById("errorCard");
 
     form.addEventListener("submit", async (e) => {
-        e.preventDefault();
+        e.preventDefault(); // Evita recargar la pagina para mantener la navegacion asincrona
         resultCard.style.display = "none";
         errorCard.style.display = "none";
 
@@ -94,7 +81,7 @@ document.addEventListener("DOMContentLoaded", () => {
         } catch (err) {
             mostrarError({
                 error: "ERROR_RED",
-                mensaje: "No se pudo comunicar con el servidor. Verifica que el backend Flask esté corriendo en http://127.0.0.1:5000.",
+                mensaje: "No se pudo comunicar con el servidor. Verifica que el backend esté corriendo.",
             });
         } finally {
             btn.disabled = false;
@@ -102,19 +89,14 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 });
 
-// ---------------------------------------------------------------------------
-// Renderizar resultado (RF2, RF3, RF4)
-// ---------------------------------------------------------------------------
 function mostrarResultado(data) {
     const resultCard = document.getElementById("resultCard");
     const estadoBadge = document.getElementById("estadoBadge");
     const parametrosGrid = document.getElementById("parametrosGrid");
 
-    // Estado global (RF3)
     estadoBadge.textContent = data.estado_global;
     estadoBadge.className = "estado-badge estado-" + data.estado_global.toLowerCase().replace(/_/g, "_");
 
-    // Parámetros individuales (RF2 y RF4)
     parametrosGrid.innerHTML = "";
     (data.parametros || []).forEach(p => {
         const cls = p.clasificacion.toLowerCase();
@@ -132,9 +114,6 @@ function mostrarResultado(data) {
     resultCard.style.display = "flex";
 }
 
-// ---------------------------------------------------------------------------
-// Renderizar error (RF6)
-// ---------------------------------------------------------------------------
 function mostrarError(data) {
     document.getElementById("errorCodigo").textContent = data.error || "ERROR";
     document.getElementById("errorMensaje").textContent = data.mensaje || "Ocurrió un error inesperado.";
