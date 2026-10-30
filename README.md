@@ -1,170 +1,266 @@
-# planta-plantol
+# Plantol — Sistema de Monitoreo y Diagnóstico de Plantas
 
-Sistema de diagnóstico del estado de salud de plantas a partir de parámetros ambientales.  
-Proyecto para el curso de **Arquitectura de Software**.
+Plantol es una aplicación integral diseñada para supervisar las condiciones ambientales de diversas especies vegetales, diagnosticar su estado de salud en tiempo real a partir de mediciones físicas (luminosidad, humedad del sustrato y temperatura) y recibir telemetría de dispositivos de hardware ESP32 o simuladores IoT.
+
+El sistema está estructurado bajo una **Arquitectura Hexagonal (Puertos y Adaptadores)** pura y organizada formalmente en las capas **Modelo**, **Vista** y **Controlador**, garantizando que el núcleo de dominio vegetal permanezca 100 % desacoplado de dependencias externas como Flask, SQLite, CSV, HTTP y tokens JWT.
 
 ---
-https://universidadsergioarboleda-my.sharepoint.com/:w:/g/personal/samuel_leyton01_usa_edu_co/IQChpExAxO_3QLbG8uVsoTSGAdlxTuKVkNLvemR7595eQrU?e=PfyCao
-## Estructura del proyecto
 
-El proyecto está organizado en **exactamente 3 carpetas de código** a nivel raíz, preservando la separación de capas a nivel de módulos:
+## 1. Funcionalidades Principales
+
+El proyecto integra de manera nativa los siguientes servicios y capacidades:
+
+- **Diagnóstico manual:** Evaluación inmediata de la salud vegetal ingresando mediciones ambientales arbitrarias para cualquier especie registrada.
+- **Recepción de lecturas de sensores:** Endpoint HTTP seguro para registrar telemetría enviada periódicamente por microcontroladores ESP32 con estampa de tiempo precisa.
+- **Simulación de ESP32:** Simulador autónomo de hardware por línea de comandos, configurable en intervalo, con soporte multidispositivo y generación de datos normales, fuera de rango y corruptos.
+- **Consulta de historial:** Registro persistente de lecturas en SQLite con visualización temporal de mediciones y estados históricos por planta.
+- **Autenticación y autorización (JWT):** Control de acceso robusto mediante tokens criptográficos con alcances (*scopes*) estrictamente delimitados para usuarios (`scope: "usuario"`) y dispositivos (`scope: "dispositivo"`).
+- **Vinculación segura de dispositivos:** Asociación unívoca entre un sensor ESP32 y una planta mediante códigos de vinculación temporales de un solo uso.
+- **Fuentes de referencia intercambiables:** Posibilidad de alternar el origen de los rangos óptimos de las especies entre un archivo CSV y una base de datos relacional SQLite mediante una simple variable de configuración, sin tocar el código de negocio.
+- **Actualización automática de la interfaz:** Panel web interactivo con actualización asíncrona periódica (cada 3.5 segundos) que refleja cambios en vivo sin recargar la página.
+
+---
+
+## 2. Estructura del Proyecto
+
+El proyecto organiza sus responsabilidades de forma modular, manteniendo una separación estricta entre dominio, adaptadores e interfaz:
 
 ```
 planta-plantol/
-├── Controlador/
-│   ├── app.py              # Rutas Flask — responde EXCLUSIVAMENTE JSON (RA1)
-│   ├── dtos.py             # DTOs y validación estricta de entrada con errores estructurados (RA6, RF6)
-│   └── controlador.js      # Controlador cliente (JS) — maneja eventos, fetch asíncrono y DOM (RA2)
-├── Modelo/
-│   ├── entidades.py        # Capa: dominio — entidades y value objects (RangosEspecie, DiagnosticoPlanta)
-│   ├── puertos.py          # Capa: dominio — interfaz/puerto IRepositorioEspecies (RA5, DIP)
-│   ├── clasificador.py     # Capa: dominio — clasificación por rangos y recomendaciones (RF2, RF4, OCP)
-│   ├── agregador.py        # Capa: dominio — regla determinista de agregación global (RF3, SRP)
-│   ├── evaluar_planta.py   # Capa: aplicación — caso de uso EvaluarPlanta (orquestación pura)
-│   ├── repositorio_csv.py  # Capa: infraestructura — acceso a datos CSV implementando el puerto (RA5)
-│   └── especies.csv        # Tabla de referencia de rangos óptimos por especie
-├── Vista/
-│   ├── index.html          # Marcado semántico y estructura visual, sin lógica (RA2)
-│   └── styles.css          # Estilos CSS modernos (modo oscuro, componentes visuales)
-├── tests/
-│   └── test_dominio.py     # 14 pruebas unitarias aisladas con doble de prueba (sin Flask ni CSV)
-├── documento_arquitectura.md # Esqueleto para el informe de arquitectura del curso
-├── bitacora_ia.md            # Esqueleto para el registro de uso de IA generativa
-├── requirements.txt         # Dependencias mínimas del backend (Flask, flask-cors, pytest)
-└── README.md
+├── Controlador/                    # Adaptadores de entrada, salida y Composition Root
+│   ├── api.py                      # Adaptador de entrada: Endpoints REST Flask y decoradores JWT
+│   ├── app.py                      # Composition Root: Fábrica Flask e inyección de dependencias
+│   └── persistencia.py             # Adaptadores de salida: SQLite, CSV y servicio PyJWT
+├── Modelo/                         # Núcleo de Dominio puro (independiente de tecnología)
+│   ├── entidades.py                # Clases de dominio, tipos de datos, excepciones y constantes
+│   ├── negocio.py                  # Reglas de negocio, evaluación de salud y casos de uso
+│   └── puertos.py                  # Interfaces abstractas (Puertos de entrada y salida)
+├── Vista/                          # Frontend web asíncrono
+│   ├── app.js                      # Lógica JavaScript asíncrona, polling y consumo de API
+│   ├── index.html                  # Interfaz semántica estructurada y accesible
+│   └── styles.css                  # Sistema de diseño botánico profesional y responsivo
+├── data/                           # Directorio gestionado para persistencia relacional
+│   └── matera.db                   # Base de datos SQLite (creada y migrada automáticamente)
+├── tests/                          # Suite completa de pruebas automatizadas
+│   ├── test_api.py                 # Pruebas de integración de la API HTTP y seguridad
+│   └── test_modelo.py              # Pruebas unitarias puras del dominio con dobles de prueba
+├── DOCUMENTO_ARQUITECTURA.md       # Especificación arquitectónica técnica y justificación SOLID
+├── README.md                       # Documentación principal de instalación y uso
+├── app.py                          # Punto de entrada directo en la raíz para iniciar el servidor
+├── especies.csv                    # Tabla de referencia ambiental en formato CSV
+├── requirements.txt                # Dependencias externas de Python
+└── simulador_esp32.py              # Script independiente para emular hardware ESP32
 ```
+
+### Guía de Orientación para el Desarrollador
+
+Si deseas inspeccionar o modificar un componente específico del sistema, consulta los siguientes archivos:
+
+- **Una regla de negocio o cálculo de salud vegetal:** Dirígete a `Modelo/negocio.py` (`ValidadorDeEstado` y casos de uso del dominio).
+- **Un endpoint HTTP o validación de solicitudes:** Consulta `Controlador/api.py` (rutas Flask y decoradores de autenticación).
+- **Una consulta SQL, tabla relacional o lectura de archivos:** Revisa `Controlador/persistencia.py` (adaptadores `RepositorioSQLite`, `HistorialLecturasBD`, `TablaReferenciaCSV`).
+- **Un elemento visual, formulario o estructura HTML:** Modifica `Vista/index.html` y sus estilos correspondientes en `Vista/styles.css`.
+- **El comportamiento de la interfaz o sincronización en vivo:** Revisa `Vista/app.js` (`sincronizarDashboard`, `iniciarPollingAsincrono`, `apiFetch`).
+- **El simulador de hardware IoT:** Edita `simulador_esp32.py` (perfiles de planta, generación de valores y envío HTTP).
 
 ---
 
-## Cómo ejecutar
+## 3. Justificación de la Arquitectura Hexagonal
 
-### 1. Backend (API Flask)
+La Arquitectura Hexagonal (también conocida como patrón de *Puertos y Adaptadores*, propuesta por Alistair Cockburn) aísla el valor comercial del software frente a las tecnologías y herramientas externas que cambian con frecuencia.
 
-En una primera terminal:
+En Plantol, el código refleja directamente estos conceptos:
 
-```bash
-# 1. Instalar dependencias
-pip install -r requirements.txt
+| Concepto Arquitectónico | Aplicación Concreta en Plantol | Ubicación en el Código |
+| :--- | :--- | :--- |
+| **Dominio Puro** | Entidades (`Planta`, `Lectura`, `Diagnostico`), reglas de salud y casos de uso. No importa Flask, SQLite ni PyJWT. | `Modelo/entidades.py`<br>`Modelo/negocio.py` |
+| **Puertos de Entrada** | Contratos que especifican qué casos de uso ofrece el sistema (`RegistrarLecturaPort`, `ConsultarEstadoPort`). | `Modelo/puertos.py` |
+| **Puertos de Salida** | Contratos abstractos de infraestructura requeridos por el dominio (`TablaReferenciaPort`, `HistorialLecturasPort`, `RepositorioPlantasPort`, `EmisorTokenPort`). | `Modelo/puertos.py` |
+| **Adaptadores de Entrada** | Reciben peticiones HTTP desde el navegador o el ESP32, validan tipos y tokens, y delegan la ejecución a los puertos de entrada. | `Controlador/api.py` |
+| **Adaptadores de Salida** | Implementaciones técnicas concretas para interactuar con SQLite (`RepositorioSQLite`), CSV (`TablaReferenciaCSV`) y firmas criptográficas (`ServicioJWT`). | `Controlador/persistencia.py` |
+| **Inyección de Dependencias** | Ensamblador o *Composition Root* que instancia los adaptadores y los inyecta en los casos de uso según la configuración. | `Controlador/app.py` |
+| **Capa de Presentación** | Interfaz de usuario desacoplada que consume la API REST de manera asíncrona mediante JSON. | `Vista/index.html`<br>`Vista/app.js` |
 
-# 2. Iniciar el servidor Flask desde la raíz del proyecto
-python Controlador/app.py
-```
+### Independencia del Dominio con Respecto a la Infraestructura
 
-El backend queda disponible en **`http://127.0.0.1:5000`**.  
-> **Nota de arquitectura (RA1):** El backend no renderiza HTML ni plantillas Jinja2; responde únicamente payloads en formato JSON.
-
-Endpoints disponibles:
-* `GET  /api/especies` — Lista de especies soportadas y sus rangos óptimos.
-* `POST /api/diagnostico` — Recibe parámetros ambientales y devuelve el diagnóstico con recomendaciones.
+El núcleo del modelo nunca interactúa directamente con bases de datos ni protocolos de transporte:
+1. `ValidadorDeEstado` recibe valores numéricos flotantes puros y un objeto de rangos de especie; no sabe si los datos provienen de un sensor físico, un simulador o un formulario web.
+2. La regla fundamental de seguridad **"un usuario solo puede acceder a sus propias plantas"** se evalúa dentro de la entidad `Planta` y el caso de uso `verificar_propiedad_planta(planta, usuario_id)`. El dominio recibe únicamente identificadores enteros limpios, abstrayendo si la identidad se verificó mediante JWT, sesiones de cookies o certificados.
+3. El puerto `TablaReferenciaPort` permite que el caso de uso invoque `obtener_rangos(especie)` de forma polimórfica: la aplicación puede leer desde `especies.csv` o desde la tabla SQLite sin alterar una sola línea de lógica interna.
 
 ---
 
-### 2. Frontend estático (Servidor independiente — RA2)
+## 4. Trazabilidad de Requisitos Obligatorios
 
-En una **segunda terminal**, corre un servidor HTTP estático desde la **raíz del proyecto**:
+| Requisito | Descripción del Requisito | Cómo se Cumple en Plantol | Ubicación y Archivos |
+| :---: | :--- | :--- | :--- |
+| **R1** | Diagnóstico ambiental manual | El caso de uso evalúa luminosidad, humedad y temperatura según los rangos de la especie seleccionada y entrega el diagnóstico clasificado (Saludable, Advertencia, Crítico). | Endpoint `POST /api/diagnostico`<br>`Modelo/negocio.py`<br>`Vista/app.js` |
+| **R2** | Recepción de telemetría ESP32 | Endpoint protegido por token de dispositivo que procesa mediciones, valida rangos físicos, asocia la planta vinculada, diagnostica y guarda fecha/hora en BD. | Endpoint `POST /api/dispositivos/<id>/lecturas`<br>`Controlador/api.py`<br>`Modelo/negocio.py` |
+| **R3** | Simulador ESP32 autónomo | Script CLI configurable (`--intervalo`, `--dispositivo`, `--modo`) capaz de simular telemetría normal, fuera de rango o corrupta para probar resiliencia. | `simulador_esp32.py` |
+| **R4** | Fuentes de referencia intercambiables | Selección entre `TablaReferenciaCSV` (`especies.csv`) y `TablaReferenciaBD` (SQLite) mediante variable de entorno sin alterar el dominio. | Variable `TABLA_REFERENCIA`<br>`Controlador/app.py`<br>`Controlador/persistencia.py` |
+| **R5** | Historial de lecturas persistente | Almacenamiento cronológico de lecturas en SQLite con capacidad de consulta de la última lectura y del historial completo por planta. | Endpoint `GET /api/plantas/<id>/historial`<br>`Controlador/persistencia.py` (`HistorialLecturasBD`) |
+| **R6** | Actualización asíncrona de la vista | El frontend realiza polling periódico asíncrono (cada 3.5s) consultando `/api/dashboard` y actualizando tarjetas y métricas sin recargar el navegador. | `Vista/app.js` (`iniciarPollingAsincrono`)<br>`Vista/index.html` |
+| **R7** | Autenticación y autorización por JWT | Tokens con *scopes* separados (`usuario` vs `dispositivo`). Protección contra suplantación de identidad y aislamiento estricto de plantas por propietario. | `Controlador/api.py` (decoradores)<br>`Modelo/negocio.py` (`AccesoDenegadoPlantaError`) |
 
-```bash
-# Desde la raíz del repositorio:
-python -m http.server 8080
-```
+---
 
-Luego abre en tu navegador:
-```
-http://localhost:8080/Vista/index.html
-```
+## 5. Persistencia y Base de Datos
 
-#### ¿Cómo se sirven juntos `Vista/index.html` y `Controlador/controlador.js`?
-* `Vista/index.html` referencia al script mediante la ruta relativa:
-  ```html
-  <script src="../Controlador/controlador.js"></script>
+### Ubicación y Gestión del Archivo de Base de Datos
+- **Ruta unificada:** La base de datos SQLite se almacena en `data/matera.db`.
+- **Resolución robusta de rutas:** La ruta se calcula en `Controlador/app.py` utilizando la ubicación absoluta del directorio del proyecto (`os.path.dirname(os.path.dirname(os.path.abspath(__file__)))`), evitando que la base de datos se cree en carpetas erróneas según el directorio de trabajo desde el que se lance el comando.
+- **Creación y migración automática:** Al arrancar el servidor, si el directorio `data/` no existe, se crea automáticamente (`os.makedirs`). Si existía un archivo `matera.db` previo en la raíz del proyecto, el sistema lo traslada de forma segura al directorio `data/` sin pérdida de datos.
+
+### Esquema y Almacenamiento
+La base de datos contiene las siguientes tablas relacionales:
+1. `usuarios`: Cuentas de usuario registradas con contraseñas cifradas con hash SHA-256 y sal criptográfica.
+2. `plantas`: Plantas registradas con su especie, ubicación y relación con el usuario propietario.
+3. `dispositivos`: Registro de dispositivos ESP32, estado de vinculación y asociación a plantas.
+4. `codigos_vinculacion`: Códigos de vinculación temporales de un solo uso para asociar hardware y plantas.
+5. `historial_lecturas`: Registro histórico continuo de cada lectura ambiental recibida con su marca temporal.
+6. `especies_referencia`: Tabla relacional con los rangos óptimos de luminosidad, humedad y temperatura para cada especie (utilizada cuando `TABLA_REFERENCIA=bd`).
+
+### Diferencia entre Historial de Lecturas y Tabla de Referencia
+- **Historial de lecturas (`historial_lecturas`):** Almacena datos dinámicos generados en el tiempo por los sensores ESP32 (telemetría mutable y acumulativa).
+- **Tabla de referencia de especies (`especies.csv` o `especies_referencia`):** Contiene parámetros agronómicos estáticos de calibración (rangos mínimos y máximos para cada variable ambiental).
+
+---
+
+## 6. Instalación y Ejecución en Windows
+
+### Requisitos Previos
+- Python 3.10 o superior instalado en el sistema.
+- Terminal de PowerShell o Símbolo del sistema (CMD).
+
+### Paso a Paso para la Instalación
+
+1. **Abrir la terminal e ingresar a la carpeta del proyecto:**
+   ```powershell
+   cd c:\Users\moral\.gemini\antigravity-ide\scratch\planta-plantol
+   ```
+
+2. **Crear y activar un entorno virtual:**
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   ```
+   *(Si utilizas CMD, activa con: `.\.venv\Scripts\activate.bat`)*
+
+3. **Instalar dependencias requeridas:**
+   ```powershell
+   python -m pip install --upgrade pip
+   python -m pip install -r requirements.txt
+   ```
+
+4. **Ejecutar la aplicación web:**
+   Puedes iniciar el servidor desde la raíz utilizando cualquiera de estos dos comandos equivalentes:
+   ```powershell
+   python app.py
+   ```
+   o directamente desde el módulo controlador:
+   ```powershell
+   python Controlador/app.py
+   ```
+
+5. **Acceder a la interfaz:**
+   Abre tu navegador web e ingresa a:
+   ```
+   http://127.0.0.1:5000
+   ```
+
+---
+
+## 7. Configuración de la Fuente de Referencia (CSV / SQLite)
+
+La aplicación permite seleccionar el origen de datos de referencia mediante la variable de entorno `TABLA_REFERENCIA`:
+
+### Ejecución en PowerShell:
+
+- **Modo CSV (predeterminado):**
+  ```powershell
+  $env:TABLA_REFERENCIA="csv"
+  python app.py
   ```
-* Al levantar `python -m http.server 8080` desde la raíz, el servidor sirve tanto la carpeta `Vista/` como `Controlador/`.
-* Cuando el navegador solicita `http://localhost:8080/Vista/index.html`, resuelve `../Controlador/controlador.js` a `http://localhost:8080/Controlador/controlador.js` (HTTP 200).
-* **Desacoplamiento total (RA2):** El frontend reside en el origen `http://localhost:8080`, mientras que la API reside en `http://127.0.0.1:5000`. Todas las interacciones se realizan vía `fetch()` asíncrono con CORS habilitado, sin recargar la página.
+
+- **Modo Base de Datos (SQLite):**
+  ```powershell
+  $env:TABLA_REFERENCIA="bd"
+  python app.py
+  ```
+
+### Ejecución en CMD:
+
+- **Modo CSV:**
+  ```cmd
+  set TABLA_REFERENCIA=csv && python app.py
+  ```
+
+- **Modo Base de Datos:**
+  ```cmd
+  set TABLA_REFERENCIA=bd && python app.py
+  ```
+
+*Nota:* Al cambiar esta configuración, el panel lateral de la interfaz web mostrará automáticamente el indicador correspondiente (**Fuente: CSV** o **Fuente: BD**) confirmando la selección sin alterar la lógica de negocio.
 
 ---
 
-### 3. Pruebas Unitarias del Dominio
+## 8. Ejecución del Simulador ESP32
 
-Las pruebas corren de forma aislada, sin necesidad de levantar Flask ni leer el archivo CSV en disco (utilizan el doble de prueba `FakeRepositorio` en memoria):
+El simulador emula el comportamiento de un microcontrolador físico transmitiendo telemetría periódica a la API:
 
-```bash
-python -m pytest tests/ -v
-```
+1. **Simulación básica con envío cada 3 segundos:**
+   ```powershell
+   python simulador_esp32.py --intervalo 3
+   ```
+
+2. **Simular un dispositivo específico en modo fuera de rango (genera alertas):**
+   ```powershell
+   python simulador_esp32.py --dispositivo ESP32-A7F9 --modo fuera_de_rango --intervalo 2
+   ```
+
+3. **Simular envío de datos corruptos para verificar validaciones de seguridad (HTTP 400):**
+   ```powershell
+   python simulador_esp32.py --dispositivo ESP32-A7F9 --modo corrupto --intervalo 4
+   ```
 
 ---
 
-## Fuente de los rangos de referencia (`Modelo/especies.csv`)
+## 9. Pruebas Automatizadas
 
-Los valores de `lux_min`, `lux_max`, `humedad_min`, `humedad_max`, `temperatura_min` y `temperatura_max` se recopilaron de fuentes botánicas reconocidas para cultivo interior:
+El proyecto incluye 23 pruebas automatizadas organizadas en pruebas unitarias del modelo y pruebas de integración de la API.
 
-1. **Royal Horticultural Society (RHS):** [rhs.org.uk](https://www.rhs.org.uk)
-2. **Missouri Botanical Garden:** [missouribotanicalgarden.org](https://www.missouribotanicalgarden.org)
-3. **Houseplant411 Care Guides:** [houseplant411.com](https://www.houseplant411.com)
+### Comando de Ejecución
+Ejecuta la suite completa desde la raíz del proyecto:
+```powershell
+python -m unittest discover tests
+```
+
+Para ver la ejecución detallada de cada prueba:
+```powershell
+python -m unittest -v tests/test_modelo.py tests/test_api.py
+```
+
+### Cobertura de las Pruebas
+- **Pruebas unitarias (`tests/test_modelo.py` - 15 pruebas):**
+  - Validación de límites físicos de sensores (valores negativos, extremos imposibles).
+  - Algoritmo de clasificación de salud vegetal (`SALUDABLE`, `ADVERTENCIA`, `CRITICO`).
+  - Dobles de prueba (*stubs/mocks*) para puertos de salida, verificando el dominio sin conexión a disco ni base de datos.
+  - Regla de dominio de pertenencia y control de acceso entre usuarios.
+- **Pruebas de integración (`tests/test_api.py` - 8 pruebas):**
+  - Ciclo de vida completo de endpoints HTTP REST usando el cliente de pruebas de Flask.
+  - Emisión y validación de tokens JWT y rechazo de tokens expirados o adulterados.
+  - Verificación de separación estricta de *scopes* (`usuario` vs `dispositivo`).
+  - Rechazo de lecturas no autorizadas y respuestas HTTP 403 Forbidden ante intentos de acceso cruzado entre usuarios.
 
 ---
 
-## Ejemplos de uso de la API
+## 10. Credenciales de Demostración Local
 
-### `GET /api/especies`
+Para fines de demostración académica y pruebas funcionales en entorno local, la base de datos se inicializa con los siguientes usuarios de prueba:
 
-**Respuesta exitosa (HTTP 200):**
-```json
-[
-  {
-    "nombre": "Cactus (Cactaceae)",
-    "rangos": {
-      "luminosidad": { "min": 5000.0, "max": 15000.0, "unidad": "lux" },
-      "humedad":     { "min": 10.0,   "max": 30.0,    "unidad": "%" },
-      "temperatura": { "min": 18.0,   "max": 35.0,    "unidad": "°C" }
-    }
-  }
-]
-```
+| Usuario | Contraseña | Rol / Propósito |
+| :--- | :--- | :--- |
+| `felipe` | `plantol123` | Propietario de plantas demo (Cactus, Helecho) |
+| `carlos` | `plantol123` | Usuario secundario para comprobar aislamiento de plantas (R7) |
 
-### `POST /api/diagnostico`
-
-**Cuerpo de la petición (JSON):**
-```json
-{
-  "especie": "Cactus (Cactaceae)",
-  "luminosidad": 2000,
-  "humedad": 20,
-  "temperatura": 25
-}
-```
-
-**Respuesta exitosa (HTTP 200):**
-```json
-{
-  "success": true,
-  "especie": "Cactus (Cactaceae)",
-  "estado_global": "EN_RIESGO",
-  "parametros": [
-    {
-      "nombre": "luminosidad",
-      "valor": 2000.0,
-      "clasificacion": "BAJO",
-      "recomendacion": "Aumenta la exposición a la luz natural o artificial."
-    },
-    {
-      "nombre": "humedad",
-      "valor": 20.0,
-      "clasificacion": "OPTIMO",
-      "recomendacion": ""
-    },
-    {
-      "nombre": "temperatura",
-      "valor": 25.0,
-      "clasificacion": "OPTIMO",
-      "recomendacion": ""
-    }
-  ]
-}
-```
-
-**Errores controlados (RF6):**
-* `HTTP 404` para especie desconocida (`ESPECIE_NO_SOPORTADA`).
-* `HTTP 400` para parámetro faltante (`PARAMETRO_AUSENTE`).
-* `HTTP 400` para valor no numérico (`VALOR_NO_NUMERICO`).
-* `HTTP 400` para valor fuera de límites físicos (`VALOR_FUERA_DE_RANGO_FISICO`).
+> **Nota de Seguridad:** Estas credenciales son de uso exclusivo en entornos de prueba y desarrollo local. En implementaciones de producción deben sustituirse por mecanismos de gestión de identidades seguras y almacenamiento de secretos en variables de entorno.

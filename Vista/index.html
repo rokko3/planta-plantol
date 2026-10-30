@@ -1,85 +1,414 @@
 <!DOCTYPE html>
 <html lang="es">
-
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Diagnóstico de Salud Vegetal</title>
-    <meta name="description" content="Sistema de diagnóstico del estado de salud de plantas basado en parámetros ambientales.">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="styles.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Plantol — Monitoreo Inteligente de Plantas</title>
+  <meta name="description" content="Sistema de monitoreo ambiental y diagnóstico de salud vegetal con arquitectura hexagonal.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
 </head>
-
 <body>
-    <div class="container">
-        <div class="header">
-            <div class="badge">Diagnóstico Ambiental</div>
-            <h1>Estado de Salud Vegetal</h1>
-            <p class="subtitle">Evalúa los parámetros ambientales de tu planta y obtén un diagnóstico completo</p>
+  <div class="app-container">
+    <!-- Barra Lateral de Navegación -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="logo-mark">P</div>
+        <div class="logo-text">
+          <h1>Plantol</h1>
+          <span class="logo-sub">Monitoreo de Plantas</span>
+        </div>
+      </div>
+
+      <nav class="nav-menu">
+        <div class="nav-section-title">PRINCIPAL</div>
+        <button class="nav-item active" data-page="dashboard" onclick="navegar('dashboard')">
+          <span class="nav-icon"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064"/></svg></span>
+          <span>Mis Plantas</span>
+        </button>
+        <button class="nav-item" data-page="diagnostico" onclick="navegar('diagnostico')">
+          <span class="nav-icon"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg></span>
+          <span>Diagnóstico Manual</span>
+        </button>
+        <button class="nav-item" data-page="nueva-planta" onclick="navegar('nueva-planta')">
+          <span class="nav-icon"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg></span>
+          <span>Agregar Planta</span>
+        </button>
+        <button class="nav-item" data-page="vincular" onclick="navegar('vincular')">
+          <span class="nav-icon"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0"/></svg></span>
+          <span>Vincular ESP32</span>
+        </button>
+
+        <div class="nav-section-title">USUARIO</div>
+        <button class="nav-item" data-page="cuenta" onclick="navegar('cuenta')">
+          <span class="nav-icon"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg></span>
+          <span>Cuenta y Acceso</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="connection-status">
+          <span class="status-dot live" id="liveDot"></span>
+          <span id="liveText">Sincronización activa (3.5s)</span>
+        </div>
+        <div class="reference-badge" id="sourceBadge">
+          <span>Fuente:</span> <strong id="sourceName">CSV</strong>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Área Principal de Contenido -->
+    <main class="main-content">
+      <!-- Barra Superior -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <h2 id="pageTitle">Mis Plantas</h2>
+          <p class="breadcrumb" id="pageSubtitle">Supervisión en tiempo real de tu invernadero</p>
         </div>
 
-        <form id="evaluarForm" novalidate>
-            <!-- Especie: se puebla dinámicamente desde GET /api/especies (RF5) -->
-            <div class="form-group">
-                <label for="especie">Especie <span class="unit-tag">(selecciona)</span></label>
-                <select id="especie" name="especie" required>
-                    <option value="" disabled selected>Cargando especies…</option>
-                </select>
+        <div class="topbar-right">
+          <div class="user-chip" id="userChip">
+            <span class="user-avatar" id="userInitial">F</span>
+            <div class="user-info">
+              <span class="user-name" id="userNameDisplay">Felipe Morales</span>
+              <span class="user-role" id="userRoleDisplay">Propietario</span>
             </div>
+            <button class="btn-logout" title="Cerrar sesión" onclick="cerrarSesion()">Salir</button>
+          </div>
+        </div>
+      </header>
 
-            <!-- Parámetros ambientales (RF1) -->
-            <div class="form-group">
-                <div class="inputs-grid">
-                    <div>
-                        <label for="luminosidad">Luminosidad <span class="unit-tag">(lux)</span></label>
-                        <input type="number" step="any" id="luminosidad" name="luminosidad"
-                            placeholder="Ej. 5000" min="0" required>
-                    </div>
-                    <div>
-                        <label for="humedad">Humedad <span class="unit-tag">(%)</span></label>
-                        <input type="number" step="any" id="humedad" name="humedad"
-                            placeholder="Ej. 55" min="0" max="100" required>
-                    </div>
-                    <div>
-                        <label for="temperatura">Temperatura <span class="unit-tag">(°C)</span></label>
-                        <input type="number" step="any" id="temperatura" name="temperatura"
-                            placeholder="Ej. 22" required>
-                    </div>
+      <!-- SECCIÓN 1: MIS PLANTAS (DASHBOARD) -->
+      <section id="page-dashboard" class="page-section active">
+        <!-- Tarjetas de Métricas Globales -->
+        <div class="metrics-grid">
+          <div class="metric-card">
+            <div class="metric-icon green"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg></div>
+            <div class="metric-body">
+              <span class="metric-label">Total de Plantas</span>
+              <strong class="metric-value" id="statTotalPlantas">0</strong>
+            </div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-icon blue"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0"/></svg></div>
+            <div class="metric-body">
+              <span class="metric-label">Sensores Conectados</span>
+              <strong class="metric-value" id="statSensores">0</strong>
+            </div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-icon emerald"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></div>
+            <div class="metric-body">
+              <span class="metric-label">Plantas Saludables</span>
+              <strong class="metric-value" id="statSaludables">0</strong>
+            </div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-icon amber"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg></div>
+            <div class="metric-body">
+              <span class="metric-label">Alertas Activas</span>
+              <strong class="metric-value" id="statAlertas">0</strong>
+            </div>
+          </div>
+        </div>
+
+        <!-- Alertas Ambientales -->
+        <div id="alertsContainer" class="alerts-container" style="display: none;"></div>
+
+        <!-- Listado de Tarjetas de Plantas -->
+        <div class="section-header">
+          <div>
+            <h3>Plantas en Monitoreo</h3>
+            <p>Datos actualizados automáticamente desde las lecturas de los dispositivos ESP32</p>
+          </div>
+          <button class="btn btn-secondary" onclick="sincronizarDashboard()">
+            Actualizar ahora
+          </button>
+        </div>
+
+        <div id="plantsGrid" class="plants-grid">
+          <div class="empty-state">
+            <span class="empty-icon"></span>
+            <p>Cargando información de tus plantas...</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECCIÓN 2: DIAGNÓSTICO MANUAL (REQUISITO R1) -->
+      <section id="page-diagnostico" class="page-section">
+        <div class="card-form-container">
+          <div class="card">
+            <div class="card-header">
+              <h3>Diagnóstico Ambiental Manual</h3>
+              <p>Evalúa el estado de salud de cualquier especie ingresando mediciones ambientales.</p>
+            </div>
+            <div class="card-body">
+              <form id="formDiagnosticoManual" onsubmit="ejecutarDiagnosticoManual(event)">
+                <div class="form-group">
+                  <label for="selectEspecieManual">Especie de planta</label>
+                  <select id="selectEspecieManual" required onchange="actualizarRangosEspecie()">
+                    <option value="">Selecciona una especie...</option>
+                  </select>
                 </div>
-            </div>
 
-            <!-- Rangos de la especie seleccionada (referencia interactiva) -->
-            <div class="rangos-info" id="rangosInfo" style="display:none;">
-                <strong>Rangos óptimos para <span id="rangosNombre"></span>:</strong>
-                <span id="rangosTexto"></span>
-            </div>
+                <!-- Resumen de rangos de referencia de la especie seleccionada -->
+                <div id="boxRangosReferencia" class="reference-box" style="display: none;">
+                  <span class="ref-title">Rangos óptimos según tabla de referencia:</span>
+                  <div class="ref-items">
+                    <span id="refLux">Luz: --</span>
+                    <span id="refHum">Humedad: --</span>
+                    <span id="refTemp">Temperatura: --</span>
+                  </div>
+                </div>
 
-            <button type="submit" class="submit-btn" id="btnEvaluar">
-                <span>Diagnosticar</span>
-                <span>➔</span>
-            </button>
-        </form>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label for="inputLuxManual">Luminosidad (lux)</label>
+                    <input type="number" id="inputLuxManual" step="any" placeholder="Ej: 8000" required>
+                  </div>
+                  <div class="form-group">
+                    <label for="inputHumManual">Humedad del sustrato (%)</label>
+                    <input type="number" id="inputHumManual" step="any" min="0" max="100" placeholder="Ej: 25" required>
+                  </div>
+                  <div class="form-group">
+                    <label for="inputTempManual">Temperatura (°C)</label>
+                    <input type="number" id="inputTempManual" step="any" placeholder="Ej: 24" required>
+                  </div>
+                </div>
 
-        <!-- Resultado del diagnóstico (RF2, RF3, RF4) -->
-        <div class="result-card" id="resultCard" style="display:none;">
-            <div class="estado-header">
-                <div class="estado-label">Estado global</div>
-                <div class="estado-badge" id="estadoBadge">--</div>
+                <div class="form-actions">
+                  <button type="submit" class="btn btn-primary">
+                    Evaluar Estado de la Planta
+                  </button>
+                </div>
+              </form>
             </div>
-            <div class="parametros-grid" id="parametrosGrid"></div>
+          </div>
+
+          <!-- Resultado del Diagnóstico Manual -->
+          <div id="resultadoDiagnosticoCard" class="card result-card" style="display: none;">
+            <div class="card-header">
+              <h3>Resultado del Diagnóstico</h3>
+              <span id="resultadoBadgeGlobal" class="badge">SALUDABLE</span>
+            </div>
+            <div class="card-body">
+              <p id="resultadoEspecieText" class="text-muted"></p>
+              <div id="resultadoParametrosList" class="parameters-result-list"></div>
+            </div>
+          </div>
         </div>
+      </section>
 
-        <!-- Mensaje de error estructurado (RF6) -->
-        <div class="error-card" id="errorCard" style="display:none;">
-            <strong id="errorCodigo"></strong>
-            <p id="errorMensaje"></p>
+      <!-- SECCIÓN 3: AGREGAR PLANTA -->
+      <section id="page-nueva-planta" class="page-section">
+        <div class="card-form-container single-column">
+          <div class="card">
+            <div class="card-header">
+              <h3>Registrar Nueva Planta</h3>
+              <p>Agrega una nueva planta a tu colección personal y asígnale un sensor ESP32 si dispones de uno.</p>
+            </div>
+            <div class="card-body">
+              <form id="formNuevaPlanta" onsubmit="crearPlanta(event)">
+                <div class="form-group">
+                  <label for="inputNombrePlanta">Nombre personalizado</label>
+                  <input type="text" id="inputNombrePlanta" placeholder="Ej: Bonsái de la oficina" required>
+                </div>
+
+                <div class="form-group">
+                  <label for="selectEspeciePlanta">Especie</label>
+                  <select id="selectEspeciePlanta" required>
+                    <option value="">Selecciona una especie...</option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label for="inputUbicacionPlanta">Ubicación física</label>
+                  <input type="text" id="inputUbicacionPlanta" placeholder="Ej: SALA · VENTANA ORIENTAL">
+                </div>
+
+                <div class="form-group">
+                  <label for="selectDispositivoPlanta">Dispositivo ESP32 (Opcional)</label>
+                  <select id="selectDispositivoPlanta">
+                    <option value="">Sin dispositivo vinculado por ahora</option>
+                  </select>
+                  <small class="form-help">Podrás vincular o cambiar el sensor en cualquier momento.</small>
+                </div>
+
+                <div class="form-actions">
+                  <button type="submit" class="btn btn-primary">Registrar Planta</button>
+                </div>
+              </form>
+            </div>
+          </div>
         </div>
+      </section>
+
+      <!-- SECCIÓN 4: VINCULAR DISPOSITIVO ESP32 -->
+      <section id="page-vincular" class="page-section">
+        <div class="card-form-container">
+          <div class="card">
+            <div class="card-header">
+              <h3>Vincular Sensor ESP32 a una Planta</h3>
+              <p>Establece una relación segura entre un hardware ESP32 y tu planta mediante código temporal.</p>
+            </div>
+            <div class="card-body">
+              <form id="formVincular" onsubmit="vincularDispositivo(event)">
+                <div class="form-group">
+                  <label for="selectPlantaVincular">Selecciona tu Planta</label>
+                  <select id="selectPlantaVincular" required>
+                    <option value="">Cargando tus plantas...</option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label for="inputDispositivoIdVincular">Identificador de Dispositivo (ESP32 ID)</label>
+                  <input type="text" id="inputDispositivoIdVincular" placeholder="Ej: ESP32-A7F9" required>
+                </div>
+
+                <div class="form-group">
+                  <label for="inputCodigoVinculacion">Código temporal de vinculación</label>
+                  <input type="text" id="inputCodigoVinculacion" placeholder="Ej: ABC123" required>
+                  <small class="form-help">Ingresa el código temporal emitido por el dispositivo o admin.</small>
+                </div>
+
+                <div class="form-actions">
+                  <button type="submit" class="btn btn-primary">Vincular Dispositivo</button>
+                </div>
+              </form>
+            </div>
+          </div>
+
+          <!-- Generador de Código para Pruebas -->
+          <div class="card">
+            <div class="card-header">
+              <h3>Generador de Código Temporal</h3>
+              <p>Utilidad para generar un código temporal de vinculación para pruebas académicas.</p>
+            </div>
+            <div class="card-body">
+              <div class="form-group">
+                <label for="inputGenDevId">ID del ESP32 a autorizar</label>
+                <input type="text" id="inputGenDevId" placeholder="Ej: ESP32-6D30" value="ESP32-6D30">
+              </div>
+              <button type="button" class="btn btn-secondary" onclick="generarCodigoPrueba()">
+                Generar Código de Vinculación
+              </button>
+              <div id="boxCodigoGenerado" class="code-box" style="display: none;">
+                <span class="code-label">Código generado (válido por 1 uso):</span>
+                <strong class="code-value" id="valCodigoGenerado">------</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECCIÓN 5: CUENTA Y AUTENTICACIÓN (R7) -->
+      <section id="page-cuenta" class="page-section">
+        <div class="card-form-container">
+          <!-- Sesión actual / Usuario activo -->
+          <div class="card">
+            <div class="card-header">
+              <h3>Sesión Activa</h3>
+              <p>Información de identidad y token JWT de usuario.</p>
+            </div>
+            <div class="card-body">
+              <div class="user-profile-view">
+                <div class="profile-row">
+                  <span class="profile-label">Nombre:</span>
+                  <strong class="profile-val" id="profileNombre">--</strong>
+                </div>
+                <div class="profile-row">
+                  <span class="profile-label">Usuario:</span>
+                  <span class="profile-val" id="profileUsername">--</span>
+                </div>
+                <div class="profile-row">
+                  <span class="profile-label">ID de Usuario:</span>
+                  <span class="profile-val" id="profileId">--</span>
+                </div>
+                <div class="profile-row">
+                  <span class="profile-label">Alcance (Scope):</span>
+                  <span class="badge badge-scope">usuario</span>
+                </div>
+              </div>
+
+              <div class="token-container">
+                <label>Token JWT Actual:</label>
+                <textarea id="tokenTextarea" readonly rows="3" class="token-box"></textarea>
+                <button class="btn btn-secondary btn-sm" onclick="copiarToken()">Copiar Token</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Iniciar Sesión o Registrarse con otro usuario -->
+          <div class="card">
+            <div class="card-header">
+              <h3>Cambiar de Usuario o Registrarse</h3>
+              <p>Prueba la regla de dominio: "un usuario solo ve sus propias plantas".</p>
+            </div>
+            <div class="card-body">
+              <form id="formAuth" onsubmit="iniciarSesion(event)">
+                <div class="form-group">
+                  <label for="inputAuthUser">Nombre de usuario</label>
+                  <input type="text" id="inputAuthUser" placeholder="felipe o carlos" required>
+                </div>
+                <div class="form-group">
+                  <label for="inputAuthPass">Contraseña</label>
+                  <input type="password" id="inputAuthPass" placeholder="plantol123" required>
+                </div>
+
+                <div class="form-actions two-buttons">
+                  <button type="submit" class="btn btn-primary">Iniciar Sesión</button>
+                  <button type="button" class="btn btn-secondary" onclick="registrarNuevoUsuario()">Registrar Nuevo</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- MODAL DE HISTORIAL DE LECTURAS (REQUISITO R5) -->
+  <div id="modalHistorial" class="modal-backdrop" style="display: none;" onclick="cerrarModalHistorial(event)">
+    <div class="modal-dialog" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div>
+          <h3 id="modalHistorialTitulo">Historial de Lecturas</h3>
+          <p id="modalHistorialSub">Telemetría registrada en base de datos SQLite</p>
+        </div>
+        <button class="modal-close" onclick="cerrarModalHistorial()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="table-responsive">
+          <table class="history-table">
+            <thead>
+              <tr>
+                <th>Fecha y Hora</th>
+                <th>Luminosidad</th>
+                <th>Humedad</th>
+                <th>Temperatura</th>
+                <th>Estado</th>
+              </tr>
+            </thead>
+            <tbody id="modalHistorialBody">
+              <tr>
+                <td colspan="5" class="text-center">Cargando mediciones...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="cerrarModalHistorial()">Cerrar</button>
+      </div>
     </div>
+  </div>
 
-    <!-- Script del cliente ubicado en Controlador/controlador.js (RA2) -->
-    <script src="../Controlador/controlador.js"></script>
+  <!-- TOAST NOTIFICACIONES -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <!-- SCRIPT ASÍNCRONO DEL FRONTEND -->
+  <script src="app.js" defer></script>
 </body>
-
 </html>
