@@ -10,12 +10,12 @@ El sistema está estructurado bajo una **Arquitectura Hexagonal (Puertos y Adapt
 
 El proyecto integra de manera nativa los siguientes servicios y capacidades:
 
-- **Diagnóstico manual:** Evaluación inmediata de la salud vegetal ingresando mediciones ambientales arbitrarias para cualquier especie registrada.
+- **Gestión y eliminación completa de plantas:** Registro, monitoreo continuo de condiciones ambientales, desvinculación de sensores y eliminación definitiva en base de datos (con purga de historial y liberación inmediata del microcontrolador ESP32 a la red local).
 - **Recepción de lecturas de sensores:** Endpoint HTTP seguro para registrar telemetría enviada periódicamente por microcontroladores ESP32 con estampa de tiempo precisa.
-- **Simulación de ESP32:** Simulador autónomo de hardware por línea de comandos, configurable en intervalo, con soporte multidispositivo y generación de datos normales, fuera de rango y corruptos.
+- **Simulación de ESP32:** Simulador autónomo de hardware IoT por línea de comandos que envía telemetría cruda a un puerto, sin reglas de negocio (la evaluación de salud vegetal reside 100 % en el Modelo).
 - **Consulta de historial:** Registro persistente de lecturas en SQLite con visualización temporal de mediciones y estados históricos por planta.
 - **Autenticación y autorización (JWT):** Control de acceso robusto mediante tokens criptográficos con alcances (*scopes*) estrictamente delimitados para usuarios (`scope: "usuario"`) y dispositivos (`scope: "dispositivo"`).
-- **Vinculación segura de dispositivos:** Asociación unívoca entre un sensor ESP32 y una planta mediante códigos de vinculación temporales de un solo uso.
+- **Aprovisionamiento Bluetooth BLE/GATT y vinculación en red:** El usuario escanea dispositivos ESP32 a su alrededor, envía las credenciales de la red mediante una característica GATT y, una vez el ESP32 está conectado a la red local, lo asocia a su planta directamente sin requerir ingresar tokens ni códigos manuales.
 - **Fuentes de referencia intercambiables:** Posibilidad de alternar el origen de los rangos óptimos de las especies entre un archivo CSV y una base de datos relacional SQLite mediante una simple variable de configuración, sin tocar el código de negocio.
 - **Actualización automática de la interfaz:** Panel web interactivo con actualización asíncrona periódica (cada 3.5 segundos) que refleja cambios en vivo sin recargar la página.
 
@@ -94,7 +94,7 @@ El núcleo del modelo nunca interactúa directamente con bases de datos ni proto
 
 | Requisito | Descripción del Requisito | Cómo se Cumple en Plantol | Ubicación y Archivos |
 | :---: | :--- | :--- | :--- |
-| **R1** | Diagnóstico ambiental manual | El caso de uso evalúa luminosidad, humedad y temperatura según los rangos de la especie seleccionada y entrega el diagnóstico clasificado (Saludable, Advertencia, Crítico). | Endpoint `POST /api/diagnostico`<br>`Modelo/negocio.py`<br>`Vista/app.js` |
+| **R1** | Diagnóstico ambiental y gestión del ciclo de vida | El modelo evalúa automáticamente luminosidad, humedad y temperatura según los rangos de la especie, permitiendo crear, consultar, desvincular sensores y eliminar plantas permanentemente de la base de datos (liberando el ESP32 en red). | Endpoints `POST /api/plantas`, `DELETE /api/plantas/<id>`<br>`Modelo/negocio.py`<br>`Vista/app.js` |
 | **R2** | Recepción de telemetría ESP32 | Endpoint protegido por token de dispositivo que procesa mediciones, valida rangos físicos, asocia la planta vinculada, diagnostica y guarda fecha/hora en BD. | Endpoint `POST /api/dispositivos/<id>/lecturas`<br>`Controlador/api.py`<br>`Modelo/negocio.py` |
 | **R3** | Simulador ESP32 autónomo | Script CLI configurable (`--intervalo`, `--dispositivo`, `--modo`) capaz de simular telemetría normal, fuera de rango o corrupta para probar resiliencia. | `simulador_esp32.py` |
 | **R4** | Fuentes de referencia intercambiables | Selección entre `TablaReferenciaCSV` (`especies.csv`) y `TablaReferenciaBD` (SQLite) mediante variable de entorno sin alterar el dominio. | Variable `TABLA_REFERENCIA`<br>`Controlador/app.py`<br>`Controlador/persistencia.py` |
@@ -206,21 +206,21 @@ La aplicación permite seleccionar el origen de datos de referencia mediante la 
 
 ## 8. Ejecución del Simulador ESP32
 
-El simulador emula el comportamiento de un microcontrolador físico transmitiendo telemetría periódica a la API:
+El simulador emula el comportamiento de un sensor físico transmitiendo telemetría periódica a la API. Siguiendo las buenas prácticas MVC, el simulador **no tiene ninguna regla de negocio** ni evalúa la salud de las plantas; únicamente transmite señales ambientales crudas al puerto HTTP:
 
 1. **Simulación básica con envío cada 3 segundos:**
    ```powershell
    python simulador_esp32.py --intervalo 3
    ```
 
-2. **Simular un dispositivo específico en modo fuera de rango (genera alertas):**
+2. **Simular fluctuaciones ambientales variables:**
    ```powershell
-   python simulador_esp32.py --dispositivo ESP32-A7F9 --modo fuera_de_rango --intervalo 2
+   python simulador_esp32.py --dispositivo ESP32-A7F9 --modo variable --intervalo 2
    ```
 
-3. **Simular envío de datos corruptos para verificar validaciones de seguridad (HTTP 400):**
+3. **Simular envío de señales corruptas para verificar validaciones de hardware (HTTP 400):**
    ```powershell
-   python simulador_esp32.py --dispositivo ESP32-A7F9 --modo corrupto --intervalo 4
+   python simulador_esp32.py --dispositivo ESP32-A7F9 --modo invalido --conteo 5
    ```
 
 ---

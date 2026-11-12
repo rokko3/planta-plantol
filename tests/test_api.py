@@ -159,20 +159,54 @@ class TestAPI(unittest.TestCase):
         self.assertEqual(resp_denegado.status_code, 403)
         self.assertEqual(resp_denegado.get_json()["error"], "ACCESO_DENEGADO")
 
-    def test_diagnostico_manual_r1(self):
-        resp = self.client.post(
-            "/api/diagnostico",
-            json={
-                "especie": "Cactus (Cactaceae)",
-                "luminosidad": 8000,
-                "humedad": 20,
-                "temperatura": 25,
-            },
+    def test_eliminar_planta(self):
+        # 1. Login felipe y registrar carlos
+        resp_felipe = self.client.post("/api/auth/login", json={"username": "felipe", "password": "plantol123"})
+        token_felipe = resp_felipe.get_json()["token"]
+
+        resp_carlos = self.client.post(
+            "/api/auth/register",
+            json={"username": "carlos_del", "password": "passCarlos123", "nombre": "Carlos Del"},
         )
-        self.assertEqual(resp.status_code, 200)
-        datos = resp.get_json()
-        self.assertTrue(datos["success"])
-        self.assertEqual(datos["estado_global"], "SALUDABLE")
+        token_carlos = resp_carlos.get_json()["token"]
+
+        # 2. Carlos intenta eliminar la planta 1 de Felipe -> 403 Forbidden
+        resp_denegado = self.client.delete(
+            "/api/plantas/1",
+            headers={"Authorization": f"Bearer {token_carlos}"},
+        )
+        self.assertEqual(resp_denegado.status_code, 403)
+
+        # 3. Felipe elimina su propia planta 1 -> 200 OK
+        resp_del = self.client.delete(
+            "/api/plantas/1",
+            headers={"Authorization": f"Bearer {token_felipe}"},
+        )
+        self.assertEqual(resp_del.status_code, 200)
+        self.assertTrue(resp_del.get_json()["success"])
+
+        # 4. Consultar la planta eliminada retorna 404
+        resp_check = self.client.get(
+            "/api/plantas/1",
+            headers={"Authorization": f"Bearer {token_felipe}"},
+        )
+        self.assertEqual(resp_check.status_code, 404)
+
+        # 5. El sensor ESP32-A7F9 que tenía vinculado queda libre en la red
+        resp_disp = self.client.get(
+            "/api/dispositivos/disponibles",
+            headers={"Authorization": f"Bearer {token_felipe}"},
+        )
+        self.assertEqual(resp_disp.status_code, 200)
+        ids = [d["id"] for d in resp_disp.get_json()]
+        self.assertIn("ESP32-A7F9", ids)
+
+        # 6. Intentar eliminar planta inexistente -> 404
+        resp_inexistente = self.client.delete(
+            "/api/plantas/999",
+            headers={"Authorization": f"Bearer {token_felipe}"},
+        )
+        self.assertEqual(resp_inexistente.status_code, 404)
 
     def test_historial_lecturas_r5(self):
         # Felipe consulta el historial de su planta 1
@@ -190,6 +224,61 @@ class TestAPI(unittest.TestCase):
         historial = resp_hist.get_json()
         self.assertIsInstance(historial, list)
         self.assertGreater(len(historial), 0)
+
+    def test_desvincular_dispositivo_y_comportamiento_en_red(self):
+        # 1. Login felipe
+        resp_login = self.client.post(
+            "/api/auth/login",
+            json={"username": "felipe", "password": "plantol123"},
+        )
+        token = resp_login.get_json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # 2. Desvincular ESP32-A7F9 de la planta 1
+        resp_desvincular = self.client.post(
+            "/api/dispositivos/desvincular",
+            json={"planta_id": 1},
+            headers=headers,
+        )
+        self.assertEqual(resp_desvincular.status_code, 200)
+        self.assertTrue(resp_desvincular.get_json()["success"])
+
+        # 3. Verificar que la planta ya no tiene sensor asociado
+        resp_planta = self.client.get("/api/plantas/1", headers=headers)
+        self.assertEqual(resp_planta.status_code, 200)
+        self.assertIsNone(resp_planta.get_json()["planta"]["dispositivo_id"])
+
+        # 4. Verificar que el ESP32-A7F9 ahora aparece en los dispositivos disponibles en red
+        resp_disp = self.client.get("/api/dispositivos/disponibles", headers=headers)
+        self.assertEqual(resp_disp.status_code, 200)
+        disponibles = [d["id"] for d in resp_disp.get_json()]
+        self.assertIn("ESP32-A7F9", disponibles)
+
+        # 5. Obtener token del dispositivo y enviar telemetría mientras está desvinculado -> HTTP 202
+        resp_token = self.client.post("/api/dispositivos/ESP32-A7F9/token")
+        token_dev = resp_token.get_json()["token"]
+        resp_lectura_unlinked = self.client.post(
+            "/api/dispositivos/ESP32-A7F9/lecturas",
+            json={"luminosidad": 6000.0, "humedad": 22.0, "temperatura": 24.0},
+            headers={"Authorization": f"Bearer {token_dev}"},
+        )
+        self.assertEqual(resp_lectura_unlinked.status_code, 202)
+
+        # 6. Re-vincular directamente sin códigos ni tokens manuales
+        resp_revincular = self.client.post(
+            "/api/dispositivos/vincular",
+            json={"planta_id": 1, "dispositivo_id": "ESP32-A7F9"},
+            headers=headers,
+        )
+        self.assertEqual(resp_revincular.status_code, 200)
+
+        # 7. La telemetría vuelve a registrarse con éxito -> HTTP 201
+        resp_lectura_relinked = self.client.post(
+            "/api/dispositivos/ESP32-A7F9/lecturas",
+            json={"luminosidad": 6000.0, "humedad": 22.0, "temperatura": 24.0},
+            headers={"Authorization": f"Bearer {token_dev}"},
+        )
+        self.assertEqual(resp_lectura_relinked.status_code, 201)
 
 
 if __name__ == "__main__":

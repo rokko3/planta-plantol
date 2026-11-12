@@ -7,7 +7,7 @@
   <meta name="description" content="Sistema de monitoreo ambiental y diagnóstico de salud vegetal con arquitectura hexagonal.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -27,10 +27,6 @@
         <button class="nav-item active" data-page="dashboard" onclick="navegar('dashboard')">
           <span class="nav-icon"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064"/></svg></span>
           <span>Mis Plantas</span>
-        </button>
-        <button class="nav-item" data-page="diagnostico" onclick="navegar('diagnostico')">
-          <span class="nav-icon"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg></span>
-          <span>Diagnóstico Manual</span>
         </button>
         <button class="nav-item" data-page="nueva-planta" onclick="navegar('nueva-planta')">
           <span class="nav-icon"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg></span>
@@ -136,72 +132,7 @@
         </div>
       </section>
 
-      <!-- SECCIÓN 2: DIAGNÓSTICO MANUAL (REQUISITO R1) -->
-      <section id="page-diagnostico" class="page-section">
-        <div class="card-form-container">
-          <div class="card">
-            <div class="card-header">
-              <h3>Diagnóstico Ambiental Manual</h3>
-              <p>Evalúa el estado de salud de cualquier especie ingresando mediciones ambientales.</p>
-            </div>
-            <div class="card-body">
-              <form id="formDiagnosticoManual" onsubmit="ejecutarDiagnosticoManual(event)">
-                <div class="form-group">
-                  <label for="selectEspecieManual">Especie de planta</label>
-                  <select id="selectEspecieManual" required onchange="actualizarRangosEspecie()">
-                    <option value="">Selecciona una especie...</option>
-                  </select>
-                </div>
-
-                <!-- Resumen de rangos de referencia de la especie seleccionada -->
-                <div id="boxRangosReferencia" class="reference-box" style="display: none;">
-                  <span class="ref-title">Rangos óptimos según tabla de referencia:</span>
-                  <div class="ref-items">
-                    <span id="refLux">Luz: --</span>
-                    <span id="refHum">Humedad: --</span>
-                    <span id="refTemp">Temperatura: --</span>
-                  </div>
-                </div>
-
-                <div class="form-row">
-                  <div class="form-group">
-                    <label for="inputLuxManual">Luminosidad (lux)</label>
-                    <input type="number" id="inputLuxManual" step="any" placeholder="Ej: 8000" required>
-                  </div>
-                  <div class="form-group">
-                    <label for="inputHumManual">Humedad del sustrato (%)</label>
-                    <input type="number" id="inputHumManual" step="any" min="0" max="100" placeholder="Ej: 25" required>
-                  </div>
-                  <div class="form-group">
-                    <label for="inputTempManual">Temperatura (°C)</label>
-                    <input type="number" id="inputTempManual" step="any" placeholder="Ej: 24" required>
-                  </div>
-                </div>
-
-                <div class="form-actions">
-                  <button type="submit" class="btn btn-primary">
-                    Evaluar Estado de la Planta
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-
-          <!-- Resultado del Diagnóstico Manual -->
-          <div id="resultadoDiagnosticoCard" class="card result-card" style="display: none;">
-            <div class="card-header">
-              <h3>Resultado del Diagnóstico</h3>
-              <span id="resultadoBadgeGlobal" class="badge">SALUDABLE</span>
-            </div>
-            <div class="card-body">
-              <p id="resultadoEspecieText" class="text-muted"></p>
-              <div id="resultadoParametrosList" class="parameters-result-list"></div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- SECCIÓN 3: AGREGAR PLANTA -->
+      <!-- SECCIÓN 2: AGREGAR PLANTA -->
       <section id="page-nueva-planta" class="page-section">
         <div class="card-form-container single-column">
           <div class="card">
@@ -248,13 +179,75 @@
       <!-- SECCIÓN 4: VINCULAR DISPOSITIVO ESP32 -->
       <section id="page-vincular" class="page-section">
         <div class="card-form-container">
+          <!-- Aprovisionamiento Bluetooth BLE / GATT -->
           <div class="card">
             <div class="card-header">
-              <h3>Vincular Sensor ESP32 a una Planta</h3>
-              <p>Establece una relación segura entre un hardware ESP32 y tu planta mediante código temporal.</p>
+              <h3>Conexión Bluetooth y Aprovisionamiento Wi-Fi (GATT)</h3>
+              <p>Escanea dispositivos ESP32 a tu alrededor y transmíteles las credenciales de tu red local mediante Bluetooth GATT.</p>
             </div>
             <div class="card-body">
-              <form id="formVincular" onsubmit="vincularDispositivo(event)">
+              <div class="ble-actions">
+                <button type="button" class="btn btn-secondary" id="btnScanBle" onclick="iniciarEscaneoBluetooth()">
+                  Escanear Dispositivos Bluetooth (BLE)
+                </button>
+                <span class="ble-status-text" id="bleScanStatus">Bluetooth listo para escanear</span>
+              </div>
+
+              <!-- Lista de dispositivos detectados a su alrededor -->
+              <div id="bleDevicesContainer" class="ble-devices-container" style="display: none;">
+                <label class="form-label-sub">Dispositivos detectados en las inmediaciones:</label>
+                <div id="bleDevicesList" class="ble-devices-list"></div>
+              </div>
+
+              <!-- Panel de transmisión GATT de credenciales Wi-Fi -->
+              <div id="panelGattConfig" class="gatt-config-panel" style="display: none;">
+                <div class="gatt-panel-header">
+                  <div>
+                    <strong>Conectado por Bluetooth</strong>
+                    <p id="lblBleDevConectado" class="text-muted">ESP32 seleccionado</p>
+                  </div>
+                  <span class="badge badge-scope">GATT Activo</span>
+                </div>
+
+                <form id="formGattWifi" onsubmit="enviarCredencialesGatt(event)">
+                  <div class="form-group">
+                    <label for="inputWifiSsid">Red Wi-Fi (SSID)</label>
+                    <input type="text" id="inputWifiSsid" placeholder="Ej: RedHogar_2.4G" value="Invernadero_WiFi" required>
+                  </div>
+
+                  <div class="form-group">
+                    <label for="inputWifiPass">Contraseña de la red Wi-Fi</label>
+                    <input type="password" id="inputWifiPass" placeholder="Contraseña de tu red Wi-Fi" value="plantolNet2026" required>
+                    <small class="form-help">Se transmitirá de forma cifrada al ESP32 mediante la característica GATT de aprovisionamiento.</small>
+                  </div>
+
+                  <div class="form-actions">
+                    <button type="submit" class="btn btn-primary" id="btnEnviarGatt">
+                      Enviar Credenciales por GATT
+                    </button>
+                  </div>
+                </form>
+
+                <div id="statusGatt" class="gatt-status-box" style="display: none;"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Vincular Dispositivo en Red a Planta -->
+          <div class="card">
+            <div class="card-header">
+              <h3>Dispositivos ESP32 Disponibles en la Red</h3>
+              <p>Sensores conectados a tu red local listos para asociarse a tus plantas con un solo clic.</p>
+            </div>
+            <div class="card-body">
+              <div class="available-devices-summary" id="boxDispositivosEnRed">
+                <div class="devices-status-badge">
+                  <span>Sensores en red listos:</span>
+                  <strong id="countDispositivosDisponibles">0</strong>
+                </div>
+              </div>
+
+              <form id="formVincularDirecto" onsubmit="vincularDispositivoDirecto(event)">
                 <div class="form-group">
                   <label for="selectPlantaVincular">Selecciona tu Planta</label>
                   <select id="selectPlantaVincular" required>
@@ -263,40 +256,26 @@
                 </div>
 
                 <div class="form-group">
-                  <label for="inputDispositivoIdVincular">Identificador de Dispositivo (ESP32 ID)</label>
-                  <input type="text" id="inputDispositivoIdVincular" placeholder="Ej: ESP32-A7F9" required>
-                </div>
-
-                <div class="form-group">
-                  <label for="inputCodigoVinculacion">Código temporal de vinculación</label>
-                  <input type="text" id="inputCodigoVinculacion" placeholder="Ej: ABC123" required>
-                  <small class="form-help">Ingresa el código temporal emitido por el dispositivo o admin.</small>
+                  <label for="selectDispositivoDisponible">Dispositivo ESP32 Disponible en Red</label>
+                  <select id="selectDispositivoDisponible" required>
+                    <option value="">Cargando dispositivos en red...</option>
+                  </select>
+                  <small class="form-help">El usuario no requiere ingresar tokens; la asociación se establece automáticamente en la red.</small>
                 </div>
 
                 <div class="form-actions">
-                  <button type="submit" class="btn btn-primary">Vincular Dispositivo</button>
+                  <button type="submit" class="btn btn-primary" id="btnVincularDirecto">
+                    Vincular a Planta
+                  </button>
                 </div>
               </form>
-            </div>
-          </div>
 
-          <!-- Generador de Código para Pruebas -->
-          <div class="card">
-            <div class="card-header">
-              <h3>Generador de Código Temporal</h3>
-              <p>Utilidad para generar un código temporal de vinculación para pruebas académicas.</p>
-            </div>
-            <div class="card-body">
-              <div class="form-group">
-                <label for="inputGenDevId">ID del ESP32 a autorizar</label>
-                <input type="text" id="inputGenDevId" placeholder="Ej: ESP32-6D30" value="ESP32-6D30">
-              </div>
-              <button type="button" class="btn btn-secondary" onclick="generarCodigoPrueba()">
-                Generar Código de Vinculación
-              </button>
-              <div id="boxCodigoGenerado" class="code-box" style="display: none;">
-                <span class="code-label">Código generado (válido por 1 uso):</span>
-                <strong class="code-value" id="valCodigoGenerado">------</strong>
+              <!-- Sección de desvinculación rápida -->
+              <div class="active-links-section">
+                <label class="form-label-sub" style="margin-top: 24px;">Sensores actualmente enlazados:</label>
+                <div id="listaSensoresVinculados" class="linked-devices-list">
+                  <p class="text-muted text-sm">Cargando...</p>
+                </div>
               </div>
             </div>
           </div>

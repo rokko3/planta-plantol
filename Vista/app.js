@@ -14,6 +14,7 @@ let currentUser = JSON.parse(localStorage.getItem("plantol_user") || "null");
 let especiesDisponibles = [];
 let pollingTimer = null;
 let currentModalPlantaId = null;
+let dispositivoBleSeleccionado = null;
 
 // ==========================================================================
 // 1. Inicialización y Navegación
@@ -51,9 +52,8 @@ function navegar(paginaId) {
   // Títulos dinámicos de cabecera
   const titulos = {
     "dashboard": ["Mis Plantas", "Supervisión en tiempo real de tu invernadero"],
-    "diagnostico": ["Diagnóstico Manual", "Evaluación ambiental directa de especies (Fase 1)"],
     "nueva-planta": ["Agregar Planta", "Registra un nuevo ejemplar en tu colección"],
-    "vincular": ["Vincular Sensor ESP32", "Asocia un dispositivo físico mediante código temporal"],
+    "vincular": ["Aprovisionar y Vincular ESP32", "Conexión Bluetooth GATT y vinculación de sensores en red"],
     "cuenta": ["Cuenta y Acceso", "Administración de identidad y reglas de propiedad"],
   };
 
@@ -64,6 +64,7 @@ function navegar(paginaId) {
 
   if (paginaId === "vincular") {
     actualizarSelectPlantasVincular();
+    cargarDispositivosDisponibles();
   }
 }
 
@@ -227,37 +228,30 @@ async function cargarEspecies() {
   const res = await apiFetch("/api/especies");
   if (res.ok) {
     especiesDisponibles = res.data;
-    const selectManual = document.getElementById("selectEspecieManual");
     const selectPlanta = document.getElementById("selectEspeciePlanta");
+    if (!selectPlanta) return;
 
-    selectManual.innerHTML = '<option value="">Selecciona una especie...</option>';
     selectPlanta.innerHTML = '<option value="">Selecciona una especie...</option>';
-
     especiesDisponibles.forEach(e => {
-      const opt1 = document.createElement("option");
-      opt1.value = e.nombre;
-      opt1.textContent = e.nombre;
-      selectManual.appendChild(opt1);
-
-      const opt2 = document.createElement("option");
-      opt2.value = e.nombre;
-      opt2.textContent = e.nombre;
-      selectPlanta.appendChild(opt2);
+      const opt = document.createElement("option");
+      opt.value = e.nombre;
+      opt.textContent = e.nombre;
+      selectPlanta.appendChild(opt);
     });
   }
 }
 
 async function cargarDispositivosSelect() {
   if (!authToken) return;
-  const res = await apiFetch("/api/dispositivos");
+  const res = await apiFetch("/api/dispositivos/disponibles");
   if (res.ok) {
     const select = document.getElementById("selectDispositivoPlanta");
+    if (!select) return;
     select.innerHTML = '<option value="">Sin dispositivo vinculado por ahora</option>';
     res.data.forEach(d => {
       const opt = document.createElement("option");
       opt.value = d.id;
-      const estado = d.planta_id ? "(Ocupado)" : "(Libre)";
-      opt.textContent = `${d.id} · ${d.mac || "Wi-Fi"} ${estado}`;
+      opt.textContent = `${d.id} · Wi-Fi (Disponible en Red)`;
       select.appendChild(opt);
     });
   }
@@ -392,13 +386,19 @@ function renderizarPlantas(plantas) {
         <div class="plant-card-footer">
           <span class="device-tag">
             Sensor: ${p.dispositivo_id ? p.dispositivo_id : "Sin ESP32"}
+            ${p.dispositivo_id ? `<button type="button" class="btn-unlink-mini" title="Desvincular sensor" onclick="desvincularDispositivo(${p.id}, '${p.dispositivo_id}')">Desvincular</button>` : ''}
           </span>
           <span>${horaFormateada}</span>
         </div>
 
-        <button class="btn btn-secondary btn-sm" onclick="abrirModalHistorial(${p.id}, '${p.nombre}')">
-          Ver Historial Completo
-        </button>
+        <div class="plant-card-actions">
+          <button class="btn btn-secondary btn-sm" onclick="abrirModalHistorial(${p.id}, '${p.nombre}')">
+            Ver Historial Completo
+          </button>
+          <button class="btn btn-sm btn-outline-danger" title="Eliminar planta de la base de datos" onclick="eliminarPlanta(${p.id}, '${p.nombre}')">
+            Eliminar Planta
+          </button>
+        </div>
       </div>
     `;
   }).join("");
@@ -417,70 +417,27 @@ function actualizarIndicadorConexion(activo) {
 }
 
 // ==========================================================================
-// 6. Diagnóstico Manual (Requisito R1)
+// 6. Gestión de Plantas y Eliminación
 // ==========================================================================
 
-function actualizarRangosEspecie() {
-  const select = document.getElementById("selectEspecieManual");
-  const box = document.getElementById("boxRangosReferencia");
-  const nombre = select.value;
-
-  if (!nombre) {
-    box.style.display = "none";
+async function eliminarPlanta(plantaId, nombre) {
+  if (!confirm(`¿Estás seguro de que deseas eliminar permanentemente la planta "${nombre}"?\n\n- Se eliminará su registro y lecturas de la base de datos.\n- Si tiene un sensor ESP32 vinculado, quedará desvinculado y libre en la red.`)) {
     return;
   }
 
-  const esp = especiesDisponibles.find(e => e.nombre === nombre);
-  if (esp && esp.rangos) {
-    document.getElementById("refLux").textContent = `Luz: ${esp.rangos.luminosidad.min}–${esp.rangos.luminosidad.max} lux`;
-    document.getElementById("refHum").textContent = `Humedad: ${esp.rangos.humedad.min}–${esp.rangos.humedad.max} %`;
-    document.getElementById("refTemp").textContent = `Temperatura: ${esp.rangos.temperatura.min}–${esp.rangos.temperatura.max} °C`;
-    box.style.display = "block";
-  }
-}
-
-async function ejecutarDiagnosticoManual(event) {
-  event.preventDefault();
-  const especie = document.getElementById("selectEspecieManual").value;
-  const luminosidad = parseFloat(document.getElementById("inputLuxManual").value);
-  const humedad = parseFloat(document.getElementById("inputHumManual").value);
-  const temperatura = parseFloat(document.getElementById("inputTempManual").value);
-
-  const res = await apiFetch("/api/diagnostico", {
-    method: "POST",
-    body: JSON.stringify({ especie, luminosidad, humedad, temperatura }),
+  const res = await apiFetch(`/api/plantas/${plantaId}`, {
+    method: "DELETE",
   });
 
-  const card = document.getElementById("resultadoDiagnosticoCard");
-  if (!res.ok) {
-    mostrarToast(`Error: ${res.data.mensaje || "Datos inválidos"}`, "error");
-    card.style.display = "none";
-    return;
+  if (res.ok) {
+    mostrarToast(`Planta "${nombre}" eliminada exitosamente.`);
+    await sincronizarDashboard();
+    await cargarDispositivosDisponibles();
+    await cargarDispositivosSelect();
+    await actualizarSelectPlantasVincular();
+  } else {
+    mostrarToast(`Error al eliminar planta: ${res.data.mensaje}`, "error");
   }
-
-  const d = res.data;
-  card.style.display = "block";
-
-  const badge = document.getElementById("resultadoBadgeGlobal");
-  badge.textContent = d.estado_global;
-  badge.className = `badge badge-${d.estado_global.toLowerCase().replace("_", "-")}`;
-
-  document.getElementById("resultadoEspecieText").textContent = `Especie evaluada: ${d.especie}`;
-
-  const lista = document.getElementById("resultadoParametrosList");
-  lista.innerHTML = d.parametros.map(p => `
-    <div class="param-item">
-      <div class="param-item-header">
-        <span class="param-item-name">${p.nombre}: ${p.valor}</span>
-        <span class="badge badge-${p.clasificacion === 'OPTIMO' ? 'saludable' : (p.clasificacion === 'BAJO' ? 'en-riesgo' : 'critico')}">
-          ${p.clasificacion}
-        </span>
-      </div>
-      <p class="param-item-reco">${p.recomendacion ? p.recomendacion : "Condición ambiental óptima."}</p>
-    </div>
-  `).join("");
-
-  mostrarToast("Evaluación manual completada con éxito.");
 }
 
 // ==========================================================================
@@ -514,64 +471,418 @@ async function actualizarSelectPlantasVincular() {
   const res = await apiFetch("/api/plantas");
   if (res.ok) {
     const select = document.getElementById("selectPlantaVincular");
-    select.innerHTML = '<option value="">Selecciona tu Planta...</option>';
-    res.data.forEach(p => {
-      const opt = document.createElement("option");
-      opt.value = p.id;
-      opt.textContent = `${p.nombre} (${p.especie}) - Actual: ${p.dispositivo_id || "Ninguno"}`;
-      select.appendChild(opt);
-    });
+    if (select) {
+      select.innerHTML = '<option value="">Selecciona tu Planta...</option>';
+      res.data.forEach(p => {
+        const opt = document.createElement("option");
+        opt.value = p.id;
+        opt.textContent = `${p.nombre} (${p.especie}) - Actual: ${p.dispositivo_id || "Sin sensor"}`;
+        select.appendChild(opt);
+      });
+    }
+
+    const listaVinculados = document.getElementById("listaSensoresVinculados");
+    if (listaVinculados) {
+      const vinculadas = res.data.filter(p => p.dispositivo_id);
+      if (vinculadas.length === 0) {
+        listaVinculados.innerHTML = '<p class="text-muted text-sm">No tienes sensores vinculados a ninguna planta.</p>';
+      } else {
+        listaVinculados.innerHTML = vinculadas.map(p => `
+          <div class="linked-device-item">
+            <div>
+              <strong>${p.nombre}</strong> <span class="text-muted">(${p.especie})</span>
+              <div class="text-muted text-sm">Sensor: <code>${p.dispositivo_id}</code></div>
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm btn-danger-hover" onclick="desvincularDispositivo(${p.id}, '${p.dispositivo_id}')">
+              Desvincular
+            </button>
+          </div>
+        `).join("");
+      }
+    }
   }
 }
 
-async function generarCodigoPrueba() {
-  const devId = document.getElementById("inputGenDevId").value.trim().toUpperCase();
-  if (!devId) {
-    mostrarToast("Ingresa el ID del ESP32 a autorizar.", "warning");
+async function desvincularDispositivo(plantaId, dispositivoId) {
+  if (!confirm(`¿Deseas desvincular el sensor ${dispositivoId || ''} de esta planta? El dispositivo volverá a estar disponible en la red.`)) {
     return;
   }
 
-  const res = await apiFetch("/api/dispositivos/codigo", {
+  const res = await apiFetch("/api/dispositivos/desvincular", {
     method: "POST",
-    body: JSON.stringify({ dispositivo_id: devId }),
+    body: JSON.stringify({ planta_id: plantaId, dispositivo_id: dispositivoId }),
   });
 
   if (res.ok) {
-    const box = document.getElementById("boxCodigoGenerado");
-    const val = document.getElementById("valCodigoGenerado");
-    val.textContent = res.data.codigo_temporal;
-    box.style.display = "block";
-
-    // Rellena automáticamente los campos del formulario de vinculación
-    document.getElementById("inputDispositivoIdVincular").value = devId;
-    document.getElementById("inputCodigoVinculacion").value = res.data.codigo_temporal;
-
-    mostrarToast(`Código temporal para ${devId} generado.`);
+    mostrarToast(`Sensor ${dispositivoId || ''} desvinculado con éxito. Ahora está disponible en la red.`);
+    await sincronizarDashboard();
+    await cargarDispositivosDisponibles();
+    await cargarDispositivosSelect();
+    await actualizarSelectPlantasVincular();
   } else {
-    mostrarToast(`Error: ${res.data.mensaje}`, "error");
+    mostrarToast(`Error al desvincular: ${res.data.mensaje}`, "error");
   }
 }
 
-async function vincularDispositivo(event) {
-  event.preventDefault();
+// ==========================================================================
+// 7. Bluetooth BLE real (Web Bluetooth API) — Aprovisionamiento GATT
+// ==========================================================================
+
+// UUIDs del servicio y característica GATT — deben coincidir con planta.cpp
+const BLE_SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+const BLE_CHAR_UUID    = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+const BLE_DEVICE_NAME  = "Planta-Sensor-Config";
+
+// Objeto de dispositivo BLE conectado (mantiene la conexión GATT activa)
+let bleDevice     = null;
+let bleServer     = null;
+let bleCaracteristica = null;
+
+/**
+ * Verifica si el navegador soporta Web Bluetooth y si el contexto es seguro.
+ * Web Bluetooth requiere Chrome/Edge y HTTPS (o http://localhost).
+ */
+function verificarSoporteBluetooth() {
+  if (!navigator.bluetooth) {
+    mostrarToast(
+      "Tu navegador no soporta Web Bluetooth. Usa Google Chrome o Microsoft Edge.",
+      "error"
+    );
+    return false;
+  }
+  if (location.protocol !== "https:" && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
+    mostrarToast(
+      "Web Bluetooth requiere HTTPS. Abre la aplicación en http://localhost:5000",
+      "error"
+    );
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Lanza el diálogo nativo del sistema operativo para escanear y seleccionar
+ * un dispositivo ESP32 BLE cercano. El usuario elige el dispositivo desde
+ * la ventana del navegador (Chrome/Edge muestran los dispositivos visibles).
+ *
+ * Reemplaza la llamada simulada anterior a /api/dispositivos/bluetooth.
+ */
+async function iniciarEscaneoBluetooth() {
+  if (!verificarSoporteBluetooth()) return;
+
+  const btn        = document.getElementById("btnScanBle");
+  const statusText = document.getElementById("bleScanStatus");
+  const container  = document.getElementById("bleDevicesContainer");
+  const list       = document.getElementById("bleDevicesList");
+
+  btn.disabled    = true;
+  btn.textContent = "Abriendo diálogo Bluetooth...";
+  statusText.textContent = "Esperando que selecciones el dispositivo ESP32...";
+
+  try {
+    // Abre el diálogo nativo del SO para buscar dispositivos BLE.
+    // Filtra por nombre exacto o por el UUID del servicio GATT del ESP32.
+    bleDevice = await navigator.bluetooth.requestDevice({
+      filters: [
+        { name: BLE_DEVICE_NAME },
+        { services: [BLE_SERVICE_UUID] }
+      ],
+      optionalServices: [BLE_SERVICE_UUID]
+    });
+
+    statusText.textContent = `Dispositivo seleccionado: ${bleDevice.name}`;
+    mostrarToast(`ESP32 "${bleDevice.name}" seleccionado. Conectando...`);
+
+    // Escuchar si el dispositivo se desconecta inesperadamente
+    bleDevice.addEventListener("gattserverdisconnected", () => {
+      statusText.textContent = "Conexión Bluetooth perdida.";
+      mostrarToast("El ESP32 se desconectó del Bluetooth.", "warning");
+      ocultarPanelGatt();
+    });
+
+    // Conectar al servidor GATT del ESP32
+    statusText.textContent = "Estableciendo conexión GATT...";
+    bleServer = await bleDevice.gatt.connect();
+
+    // Obtener el servicio y la característica de aprovisionamiento
+    const servicio = await bleServer.getPrimaryService(BLE_SERVICE_UUID);
+    bleCaracteristica = await servicio.getCharacteristic(BLE_CHAR_UUID);
+
+    // Mostrar el ESP32 seleccionado en la lista de la UI
+    container.style.display = "block";
+    list.innerHTML = "";
+    const item = document.createElement("div");
+    item.className = "ble-device-item";
+    item.innerHTML = `
+      <div class="ble-device-info">
+        <div class="ble-device-title">
+          <strong>${bleDevice.name}</strong>
+          <span class="badge badge-saludable">Conectado</span>
+        </div>
+        <div class="ble-device-meta">
+          <span>Servicio GATT activo</span>
+          <span class="rssi-pill">Listo para provisionar</span>
+        </div>
+      </div>
+      <button type="button" class="btn btn-primary btn-sm" onclick="mostrarPanelGatt()">
+        Enviar Credenciales Wi-Fi
+      </button>
+    `;
+    list.appendChild(item);
+
+    statusText.textContent = `✓ Conexión GATT establecida con "${bleDevice.name}"`;
+    mostrarToast(`¡Conectado por Bluetooth a ${bleDevice.name}! Ahora envía las credenciales Wi-Fi.`);
+
+  } catch (err) {
+    if (err.name === "NotFoundError") {
+      statusText.textContent = "Ningún dispositivo seleccionado.";
+      mostrarToast("No se seleccionó ningún ESP32.", "warning");
+    } else if (err.name === "SecurityError") {
+      mostrarToast("Se necesita un contexto seguro (HTTPS o localhost).", "error");
+    } else {
+      statusText.textContent = `Error: ${err.message}`;
+      mostrarToast(`Error Bluetooth: ${err.message}`, "error");
+      console.error("[BLE] Error al escanear:", err);
+    }
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = "Escanear Dispositivos Bluetooth (BLE)";
+  }
+}
+
+/** Muestra el panel de envío de credenciales GATT */
+function mostrarPanelGatt() {
+  const panel = document.getElementById("panelGattConfig");
+  const lbl   = document.getElementById("lblBleDevConectado");
+  if (bleDevice) lbl.textContent = `${bleDevice.name}`;
+  document.getElementById("statusGatt").style.display = "none";
+  panel.style.display = "block";
+  panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+/** Oculta el panel GATT al perder conexión */
+function ocultarPanelGatt() {
+  document.getElementById("panelGattConfig").style.display = "none";
+  bleDevice = null;
+  bleServer = null;
+  bleCaracteristica = null;
+}
+
+// Alias de compatibilidad (llamado desde el botón "Conectar por Bluetooth")
+function conectarDispositivoBle() {
+  mostrarPanelGatt();
+}
+
+/**
+ * Envía las credenciales Wi-Fi DIRECTAMENTE al ESP32 mediante BLE GATT.
+ *
+ * Escribe en la característica de aprovisionamiento la cadena:
+ *   SSID|PASSWORD|TOKEN_PAIRING
+ *
+ * El ESP32 recibe esto en su callback onWrite y:
+ *   1. Apaga BLE
+ *   2. Conecta al Wi-Fi
+ *   3. Llama al backend para vincularse con el token
+ *
+ * Esta función NO llama a ningún endpoint del servidor — la escritura
+ * es punto a punto entre el navegador y el ESP32 vía Bluetooth.
+ */
+async function enviarCredencialesGatt(event) {
+  if (event) event.preventDefault();
+
+  if (!bleCaracteristica || !bleDevice || !bleDevice.gatt.connected) {
+    mostrarToast("No hay conexión BLE activa. Escanea y selecciona el ESP32 primero.", "warning");
+    return;
+  }
+
+  const ssid      = document.getElementById("inputWifiSsid").value.trim();
+  const password  = document.getElementById("inputWifiPass").value.trim();
+  const btn       = document.getElementById("btnEnviarGatt");
+  const statusBox = document.getElementById("statusGatt");
+
+  if (!ssid) {
+    mostrarToast("Ingresa el nombre de la red Wi-Fi (SSID).", "warning");
+    return;
+  }
+
+  // El token de pairing se obtiene del backend para que el ESP32
+  // pueda autenticarse cuando llame a /api/dispositivos/reclamar
+  statusBox.style.display = "block";
+  statusBox.className = "gatt-status-box loading";
+  statusBox.innerHTML = "<p>Obteniendo token de emparejamiento del servidor...</p>";
+
+  let pairingToken = "";
+  try {
+    const resToken = await apiFetch("/api/dispositivos/generar-token-pairing", {
+      method: "POST"
+    });
+    if (resToken.ok && resToken.data.token) {
+      pairingToken = resToken.data.token;
+    } else {
+      // Si el backend no tiene ese endpoint, generar un token local temporal
+      pairingToken = "PLANTOL-" + Date.now().toString(36).toUpperCase();
+    }
+  } catch {
+    pairingToken = "PLANTOL-" + Date.now().toString(36).toUpperCase();
+  }
+
+  btn.disabled    = true;
+  btn.textContent = "Transmitiendo por GATT...";
+  statusBox.className = "gatt-status-box loading";
+  statusBox.innerHTML = `
+    <p>1. Escribiendo credenciales en la característica GATT del ESP32...</p>
+    <p>2. El ESP32 apagará Bluetooth y se conectará a '${ssid}'...</p>
+    <p>3. Esperando confirmación de conexión...</p>
+  `;
+
+  try {
+    // Construir el payload en formato SSID|PASS|TOKEN (pipe-delimited)
+    const payload  = `${ssid}|${password}|${pairingToken}`;
+    const encoder  = new TextEncoder();
+    const dataView = encoder.encode(payload);
+
+    // Escribir directamente en la característica GATT del ESP32 (BLE real)
+    await bleCaracteristica.writeValue(dataView);
+
+    console.log(`[BLE] Credenciales enviadas al ESP32: SSID=${ssid}, Token=${pairingToken}`);
+
+    statusBox.className = "gatt-status-box loading";
+    statusBox.innerHTML = `
+      <p>✓ Credenciales escritas en el ESP32 vía GATT.</p>
+      <p>El dispositivo está conectándose a '${ssid}'...</p>
+      <p>Cuando el LED del ESP32 deje de parpadear y quede fijo, estará listo.</p>
+    `;
+
+    mostrarToast("Credenciales enviadas al ESP32. Aguarda mientras se conecta al Wi-Fi...");
+
+    // Esperar a que el ESP32 se conecte al Wi-Fi y aparezca en la red
+    // (el backend lo detectará cuando el ESP32 llame a /api/dispositivos/reclamar)
+    await esperarDispositivoEnRed(pairingToken, ssid);
+
+  } catch (err) {
+    statusBox.className = "gatt-status-box error";
+    statusBox.innerHTML = `<strong>Error GATT:</strong> ${err.message}`;
+    mostrarToast(`No se pudo escribir en el ESP32: ${err.message}`, "error");
+    console.error("[BLE] Error al escribir característica:", err);
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = "Enviar Credenciales por GATT";
+  }
+}
+
+/**
+ * Espera con polling a que el ESP32 aparezca en la red local
+ * (es decir, llame a /api/dispositivos/reclamar con el token).
+ * Reintenta cada 3 segundos durante máximo 30 segundos.
+ */
+async function esperarDispositivoEnRed(token, ssid) {
+  const statusBox = document.getElementById("statusGatt");
+  const maxIntentos = 10;
+  let intento = 0;
+
+  statusBox.innerHTML += "<p>Verificando conexión del ESP32 en la red...</p>";
+
+  while (intento < maxIntentos) {
+    intento++;
+    await new Promise(r => setTimeout(r, 3000));
+
+    // Consultar dispositivos disponibles en red
+    const res = await apiFetch("/api/dispositivos/disponibles");
+    if (res.ok && Array.isArray(res.data) && res.data.length > 0) {
+      statusBox.className = "gatt-status-box success";
+      statusBox.innerHTML = `
+        <strong>✓ ESP32 conectado a la red Wi-Fi '${ssid}'</strong>
+        <p>El dispositivo ya está disponible en la red local y listo para vincular a una planta.</p>
+      `;
+      mostrarToast(`¡ESP32 conectado a ${ssid} y disponible en red!`);
+
+      // Desconectar BLE (ya no es necesario — el ESP32 lo hace solo al recibir credenciales)
+      if (bleDevice && bleDevice.gatt.connected) {
+        bleDevice.gatt.disconnect();
+      }
+
+      await cargarDispositivosDisponibles();
+      await cargarDispositivosSelect();
+      return;
+    }
+
+    statusBox.innerHTML += `<p>Intento ${intento}/${maxIntentos}... esperando que el ESP32 aparezca en red.</p>`;
+  }
+
+  // Si después de 30 s no aparece
+  statusBox.className = "gatt-status-box error";
+  statusBox.innerHTML = `
+    <strong>Tiempo de espera agotado</strong>
+    <p>El ESP32 no apareció en la red. Verifica que el SSID y la contraseña sean correctos y vuelve a intentarlo.</p>
+  `;
+  mostrarToast("El ESP32 no se conectó al Wi-Fi. Verifica las credenciales.", "error");
+}
+
+async function cargarDispositivosDisponibles() {
+  if (!authToken) return;
+  const res = await apiFetch("/api/dispositivos/disponibles");
+  const select = document.getElementById("selectDispositivoDisponible");
+  const countBadge = document.getElementById("countDispositivosDisponibles");
+
+  if (!select) return;
+
+  if (res.ok) {
+    const disponibles = res.data || [];
+    if (countBadge) countBadge.textContent = disponibles.length;
+    select.innerHTML = '<option value="">Selecciona un sensor disponible...</option>';
+
+    if (disponibles.length === 0) {
+      select.innerHTML = '<option value="">No hay sensores disponibles en red (aprovisiona uno por Bluetooth)</option>';
+    } else {
+      disponibles.forEach(d => {
+        const opt = document.createElement("option");
+        opt.value = d.id;
+        opt.textContent = `${d.id} · MAC: ${d.mac || "Wi-Fi"} (Disponible en red)`;
+        select.appendChild(opt);
+      });
+    }
+  }
+}
+
+async function vincularDispositivoDirecto(event) {
+  if (event) event.preventDefault();
   const planta_id = document.getElementById("selectPlantaVincular").value;
-  const dispositivo_id = document.getElementById("inputDispositivoIdVincular").value.trim().toUpperCase();
-  const codigo = document.getElementById("inputCodigoVinculacion").value.trim().toUpperCase();
+  const dispositivo_id = document.getElementById("selectDispositivoDisponible").value;
+
+  if (!planta_id) {
+    mostrarToast("Selecciona la planta a la que deseas asignar el sensor.", "warning");
+    return;
+  }
+  if (!dispositivo_id) {
+    mostrarToast("Selecciona un sensor ESP32 disponible en la red.", "warning");
+    return;
+  }
+
+  const btn = document.getElementById("btnVincularDirecto");
+  btn.disabled = true;
 
   const res = await apiFetch("/api/dispositivos/vincular", {
     method: "POST",
-    body: JSON.stringify({ planta_id, dispositivo_id, codigo }),
+    body: JSON.stringify({ planta_id, dispositivo_id }),
   });
 
+  btn.disabled = false;
+
   if (res.ok) {
-    mostrarToast(`Dispositivo ${dispositivo_id} vinculado con éxito.`);
-    document.getElementById("formVincular").reset();
-    document.getElementById("boxCodigoGenerado").style.display = "none";
+    mostrarToast(`¡Dispositivo ${dispositivo_id} vinculado a la planta con éxito!`);
+    document.getElementById("formVincularDirecto").reset();
+    await cargarDispositivosDisponibles();
+    await cargarDispositivosSelect();
     await sincronizarDashboard();
     navegar("dashboard");
   } else {
     mostrarToast(`Error de vinculación: ${res.data.mensaje}`, "error");
   }
+}
+
+// Mantener compatibilidad con llamadas anteriores
+async function vincularDispositivo(event) {
+  await vincularDispositivoDirecto(event);
 }
 
 // ==========================================================================

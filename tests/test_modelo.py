@@ -27,12 +27,13 @@ from Modelo.entidades import (
     Lectura,
     LecturaInvalidaError,
     Planta,
+    PlantaNoEncontradaError,
     RangosEspecie,
     ResultadoParametro,
 )
 from Modelo.negocio import (
     CasoUsoConsultarEstado,
-    CasoUsoEvaluarPlantaManual,
+    CasoUsoGestionPlantas,
     CasoUsoRegistrarLectura,
     ValidadorDeEstado,
 )
@@ -142,6 +143,12 @@ class FakeRepositorioPlantas(RepositorioPlantasPort):
         if planta_id in self._plantas:
             self._plantas[planta_id].dispositivo_id = dispositivo_id
 
+    def eliminar_planta(self, planta_id: int) -> bool:
+        if planta_id in self._plantas:
+            del self._plantas[planta_id]
+            return True
+        return False
+
 
 class FakeRepositorioDispositivos(RepositorioDispositivosPort):
     def __init__(self):
@@ -157,6 +164,14 @@ class FakeRepositorioDispositivos(RepositorioDispositivosPort):
 
     def listar_dispositivos(self):
         return list(self._dispositivos.values())
+
+    def listar_dispositivos_disponibles(self):
+        return [d for d in self._dispositivos.values() if d.planta_id is None]
+
+    def registrar_o_conectar_dispositivo(self, dispositivo_id: str, mac=None, red_wifi=None):
+        dev = Dispositivo(id=dispositivo_id, secret_hash="hash", mac=mac or "24:6F:28:00:00:00")
+        self._dispositivos[dispositivo_id] = dev
+        return dev
 
     def actualizar_ultimo_contacto(self, dispositivo_id: str, fecha_hora: str):
         if dispositivo_id in self._dispositivos:
@@ -345,29 +360,75 @@ class TestCasoUsoRegistrarLectura(unittest.TestCase):
             )
 
 
-class TestCasoUsoEvaluarPlantaManual(unittest.TestCase):
+class TestCasoUsoGestionPlantas(unittest.TestCase):
     def setUp(self):
         self.validador = ValidadorDeEstado()
         self.tabla = FakeTablaReferencia()
-        self.caso = CasoUsoEvaluarPlantaManual(self.validador, self.tabla)
+        self.repo_plantas = FakeRepositorioPlantas()
+        self.repo_dispositivos = FakeRepositorioDispositivos()
 
-    def test_evaluacion_manual_valida(self):
-        diag = self.caso.evaluar_manual(
-            especie="Cactus (Cactaceae)",
-            luminosidad=10000,
-            humedad=20,
-            temperatura=25,
+        self.caso = CasoUsoGestionPlantas(
+            validador=self.validador,
+            repo_plantas=self.repo_plantas,
+            repo_dispositivos=self.repo_dispositivos,
+            tabla_referencia=self.tabla,
         )
-        self.assertEqual(diag.estado_global, SALUDABLE)
 
-    def test_especie_desconocida_lanza_error(self):
+        # Dispositivo registrado en la red
+        self.dev = self.repo_dispositivos.guardar_dispositivo(
+            Dispositivo(id="ESP32-A7F9", secret_hash="hash")
+        )
+        # Planta del usuario 1 vinculada al ESP32
+        self.planta = self.repo_plantas.guardar_planta(
+            Planta(id=0, nombre="Cactus", especie="Cactus (Cactaceae)", usuario_id=1, dispositivo_id="ESP32-A7F9")
+        )
+        self.dev.planta_id = self.planta.id
+
+    def test_crear_planta_exitoso(self):
+        nueva = self.caso.crear_planta(
+            usuario_id=1,
+            nombre="Orquídea Sala",
+            especie="Orquídea (Orchidaceae)",
+            ubicacion="Sala",
+        )
+        self.assertEqual(nueva.nombre, "Orquídea Sala")
+        self.assertEqual(nueva.usuario_id, 1)
+
+    def test_crear_planta_especie_no_soportada(self):
         with self.assertRaises(EspecieNoSoportadaError):
-            self.caso.evaluar_manual(
-                especie="Bonsai Inexistente",
-                luminosidad=10000,
-                humedad=20,
-                temperatura=25,
+            self.caso.crear_planta(
+                usuario_id=1,
+                nombre="Pino",
+                especie="Pino Desconocido",
+                ubicacion="Jardín",
             )
+
+    def test_desvincular_dispositivo_libera_esp32(self):
+        ok = self.caso.desvincular_dispositivo(usuario_id=1, planta_id=self.planta.id)
+        self.assertTrue(ok)
+        planta_act = self.repo_plantas.obtener_por_id(self.planta.id)
+        self.assertIsNone(planta_act.dispositivo_id)
+        dev_act = self.repo_dispositivos.buscar_por_id("ESP32-A7F9")
+        self.assertIsNone(dev_act.planta_id)
+
+    def test_eliminar_planta_exitoso_y_libera_esp32(self):
+        ok = self.caso.eliminar_planta(usuario_id=1, planta_id=self.planta.id)
+        self.assertTrue(ok)
+
+        # La planta ya no existe en el repositorio
+        self.assertIsNone(self.repo_plantas.obtener_por_id(self.planta.id))
+
+        # El ESP32 fue liberado
+        dev_act = self.repo_dispositivos.buscar_por_id("ESP32-A7F9")
+        self.assertIsNone(dev_act.planta_id)
+
+    def test_eliminar_planta_usuario_ajeno_denegado(self):
+        with self.assertRaises(AccesoDenegadoPlantaError):
+            self.caso.eliminar_planta(usuario_id=2, planta_id=self.planta.id)
+
+    def test_eliminar_planta_inexistente(self):
+        with self.assertRaises(PlantaNoEncontradaError):
+            self.caso.eliminar_planta(usuario_id=1, planta_id=999)
 
 
 if __name__ == "__main__":

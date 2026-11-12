@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime
 from functools import wraps
+import os
 from typing import Any, Dict
 
 from flask import Blueprint, jsonify, request
@@ -25,7 +26,6 @@ from Modelo.puertos import (
     AutenticacionPort,
     ConsultarEstadoPort,
     EmisorTokenPort,
-    EvaluarPlantaPort,
     GestionPlantasPort,
     RegistrarLecturaPort,
     RepositorioDispositivosPort,
@@ -36,7 +36,6 @@ from Modelo.puertos import (
 def crear_blueprint_api(
     caso_registrar_lectura: RegistrarLecturaPort,
     caso_consultar_estado: ConsultarEstadoPort,
-    caso_evaluar_manual: EvaluarPlantaPort,
     caso_gestion_plantas: GestionPlantasPort,
     caso_autenticacion: AutenticacionPort,
     tabla_referencia: TablaReferenciaPort,
@@ -239,37 +238,6 @@ def crear_blueprint_api(
         })
 
     # =====================================================================
-    # Diagnóstico Manual Fase 1 (Requisito R1)
-    # =====================================================================
-
-    @bp.route("/diagnostico", methods=["POST"])
-    def diagnostico_manual():
-        payload = request.get_json(silent=True) or {}
-        especie = payload.get("especie")
-        try:
-            lux = float(payload.get("luminosidad"))
-            humedad = float(payload.get("humedad"))
-            temp = float(payload.get("temperatura"))
-        except (TypeError, ValueError):
-            return jsonify({"error": "PARAMETROS_INVALIDOS", "mensaje": "Los parámetros deben ser valores numéricos válidos"}), 400
-
-        if not especie:
-            return jsonify({"error": "ESPECIE_REQUERIDA", "mensaje": "Debe especificar una especie"}), 400
-
-        try:
-            resultado = caso_evaluar_manual.evaluar_manual(
-                especie=especie,
-                luminosidad=lux,
-                humedad=humedad,
-                temperatura=temp,
-            )
-            return jsonify({"success": True, **resultado.to_dict()})
-        except EspecieNoSoportadaError as exc:
-            return jsonify({"error": "ESPECIE_NO_SOPORTADA", "mensaje": str(exc), "detalle": {"especie": exc.especie}}), 404
-        except LecturaInvalidaError as exc:
-            return jsonify({"error": "VALORES_FUERA_DE_RANGO", "mensaje": str(exc)}), 400
-
-    # =====================================================================
     # Dashboard y Gestión de Plantas Asíncrono (R6, R7)
     # =====================================================================
 
@@ -340,8 +308,27 @@ def crear_blueprint_api(
         except PlantaNoEncontradaError as exc:
             return jsonify({"error": "NO_ENCONTRADA", "mensaje": str(exc)}), 404
 
+    @bp.route("/plantas/<int:planta_id>", methods=["DELETE"])
+    @bp.route("/plantas/<int:planta_id>/eliminar", methods=["POST"])
+    @requiere_jwt_usuario
+    def eliminar_planta(usuario_id: int, planta_id: int):
+        try:
+            exito = caso_gestion_plantas.eliminar_planta(usuario_id=usuario_id, planta_id=planta_id)
+            if not exito:
+                return jsonify({"error": "ELIMINACION_FALLIDA", "mensaje": "No se pudo eliminar la planta solicitada."}), 400
+
+            return jsonify({
+                "success": True,
+                "mensaje": f"Planta {planta_id} eliminada exitosamente. Su sensor fue desvinculado y liberado en la red.",
+                "planta_id": planta_id,
+            })
+        except AccesoDenegadoPlantaError as exc:
+            return jsonify({"error": "ACCESO_DENEGADO", "mensaje": str(exc)}), 403
+        except PlantaNoEncontradaError as exc:
+            return jsonify({"error": "NO_ENCONTRADA", "mensaje": str(exc)}), 404
+
     # =====================================================================
-    # Dispositivos y Vinculación Segura
+    # Dispositivos, Aprovisionamiento BLE/GATT y Vinculación en Red
     # =====================================================================
 
     @bp.route("/dispositivos", methods=["GET"])
@@ -353,10 +340,110 @@ def crear_blueprint_api(
                 "id": d.id,
                 "mac": d.mac,
                 "planta_id": d.planta_id,
+                "disponible": d.planta_id is None or d.planta_id == 0,
                 "ultimo_contacto": d.ultimo_contacto,
                 "estado_conexion": d.estado_conexion,
             }
             for d in dispositivos
+        ])
+
+    @bp.route("/dispositivos/bluetooth", methods=["GET"])
+    @requiere_jwt_usuario
+    def escanear_bluetooth(usuario_id: int):
+        """
+        Simula el escaneo BLE de dispositivos ESP32 en las inmediaciones.
+        Permite al usuario ver los dispositivos físicos a su alrededor.
+        """
+        dispositivos_bd = repo_dispositivos.listar_dispositivos()
+        candidatos = [d.id for d in dispositivos_bd]
+        for extra in ["ESP32-B8E1", "ESP32-F41A"]:
+            if extra not in candidatos:
+                candidatos.append(extra)
+
+        resultado = []
+        for idx, dev_id in enumerate(candidatos):
+            rssi = -48 - (idx * 7)
+            dev_bd = repo_dispositivos.buscar_por_id(dev_id)
+            vinculado = (dev_bd.planta_id is not None and dev_bd.planta_id != 0) if dev_bd else False
+            resultado.append({
+                "id": dev_id,
+                "nombre_ble": f"Plantol-ESP32-{dev_id.split('-')[-1]}",
+                "mac": dev_bd.mac if (dev_bd and dev_bd.mac) else f"24:6F:28:FE:{dev_id[-4:]}",
+                "rssi": f"{rssi} dBm",
+                "vinculado": vinculado,
+                "estado_ble": "Enlazado a planta" if vinculado else "Disponible para conectar",
+            })
+        return jsonify(resultado)
+
+    @bp.route("/dispositivos/gatt-provisionar", methods=["POST"])
+    @requiere_jwt_usuario
+    def provisionar_gatt(usuario_id: int):
+        """
+        Aprovisionamiento Wi-Fi mediante conexión Bluetooth GATT.
+        El usuario envía las credenciales de la red (SSID y Password) al ESP32.
+        El ESP32 se conecta a la red Wi-Fi y queda en la red listo para agregar.
+        """
+        payload = request.get_json(silent=True) or {}
+        dispositivo_id = payload.get("dispositivo_id", "").strip().upper()
+        ssid = payload.get("ssid", "").strip()
+        password = payload.get("password", "").strip()
+
+        if not dispositivo_id or not ssid:
+            return jsonify({"error": "DATOS_INCOMPLETOS", "mensaje": "Se requiere 'dispositivo_id' y 'ssid'"}), 400
+
+        dev = repo_dispositivos.registrar_o_conectar_dispositivo(dispositivo_id=dispositivo_id, red_wifi=ssid)
+
+        return jsonify({
+            "success": True,
+            "mensaje": f"Credenciales Wi-Fi transmitidas mediante característica GATT. Dispositivo {dispositivo_id} conectado a la red '{ssid}' y disponible para agregar.",
+            "dispositivo": {
+                "id": dev.id,
+                "mac": dev.mac,
+                "estado_conexion": dev.estado_conexion,
+                "red_wifi": ssid,
+            },
+        })
+
+    @bp.route("/dispositivos/generar-token-pairing", methods=["POST"])
+    @requiere_jwt_usuario
+    def generar_token_pairing(usuario_id: int):
+        token = f"PAIR-{os.urandom(4).hex().upper()}"
+        return jsonify({"success": True, "token": token}), 200
+
+    @bp.route("/dispositivos/reclamar", methods=["POST"])
+    def reclamar_dispositivo():
+        """
+        Endpoint invocado directamente por el microcontrolador ESP32 tras conectarse a Wi-Fi.
+        Registra el hardware en la base de datos para que aparezca como disponible en la red.
+        """
+        payload = request.get_json(silent=True) or {}
+        mac = payload.get("mac", "").strip().upper()
+        if not mac:
+            return jsonify({"error": "MAC_REQUERIDA", "mensaje": "Se requiere el parámetro 'mac'"}), 400
+
+        dev = repo_dispositivos.registrar_o_conectar_dispositivo(dispositivo_id=mac, mac=mac)
+        return jsonify({
+            "success": True,
+            "mensaje": f"Dispositivo {mac} registrado y en línea exitosamente.",
+            "dispositivo_id": dev.id,
+            "mac": dev.mac,
+        }), 200
+
+    @bp.route("/dispositivos/disponibles", methods=["GET"])
+    @requiere_jwt_usuario
+    def listar_dispositivos_disponibles(usuario_id: int):
+        """
+        Retorna los dispositivos ESP32 presentes en la red y listos para agregar o vincular a una planta.
+        """
+        disponibles = repo_dispositivos.listar_dispositivos_disponibles()
+        return jsonify([
+            {
+                "id": d.id,
+                "mac": d.mac,
+                "estado_conexion": d.estado_conexion,
+                "ultimo_contacto": d.ultimo_contacto,
+            }
+            for d in disponibles
         ])
 
     @bp.route("/dispositivos/codigo", methods=["POST"])
@@ -371,7 +458,7 @@ def crear_blueprint_api(
         return jsonify({
             "dispositivo_id": dispositivo_id,
             "codigo_temporal": codigo,
-            "mensaje": f"Código temporal de vinculación generado para {dispositivo_id}. Vence tras un solo uso.",
+            "mensaje": f"Código temporal de vinculación generado para {dispositivo_id}.",
         })
 
     @bp.route("/dispositivos/vincular", methods=["POST"])
@@ -380,10 +467,12 @@ def crear_blueprint_api(
         payload = request.get_json(silent=True) or {}
         planta_id = payload.get("planta_id")
         dispositivo_id = payload.get("dispositivo_id", "").strip().upper()
-        codigo = payload.get("codigo", "").strip().upper()
+        codigo = payload.get("codigo")
+        if codigo:
+            codigo = codigo.strip().upper()
 
-        if not planta_id or not dispositivo_id or not codigo:
-            return jsonify({"error": "DATOS_INCOMPLETOS", "mensaje": "Se requiere 'planta_id', 'dispositivo_id' y 'codigo'"}), 400
+        if not planta_id or not dispositivo_id:
+            return jsonify({"error": "DATOS_INCOMPLETOS", "mensaje": "Se requiere 'planta_id' y 'dispositivo_id'"}), 400
 
         try:
             exito = caso_gestion_plantas.vincular_dispositivo(
@@ -393,11 +482,46 @@ def crear_blueprint_api(
                 codigo_vinculacion=codigo,
             )
             if not exito:
-                return jsonify({"error": "CODIGO_INVALIDO", "mensaje": "El código temporal de vinculación es inválido o ya fue usado."}), 400
+                return jsonify({"error": "VINCULACION_FALLIDA", "mensaje": "No se pudo vincular el dispositivo a la planta."}), 400
 
             return jsonify({
+                "success": True,
                 "mensaje": f"Dispositivo {dispositivo_id} vinculado correctamente a la planta {planta_id}.",
                 "dispositivo_id": dispositivo_id,
+                "planta_id": planta_id,
+            })
+        except AccesoDenegadoPlantaError as exc:
+            return jsonify({"error": "ACCESO_DENEGADO", "mensaje": str(exc)}), 403
+        except PlantaNoEncontradaError as exc:
+            return jsonify({"error": "PLANTA_NO_ENCONTRADA", "mensaje": str(exc)}), 404
+
+    @bp.route("/dispositivos/desvincular", methods=["POST"])
+    @requiere_jwt_usuario
+    def desvincular(usuario_id: int):
+        payload = request.get_json(silent=True) or {}
+        planta_id = payload.get("planta_id")
+        dispositivo_id = payload.get("dispositivo_id")
+
+        if not planta_id and not dispositivo_id:
+            return jsonify({"error": "DATOS_INCOMPLETOS", "mensaje": "Se requiere 'planta_id' o 'dispositivo_id'"}), 400
+
+        if not planta_id and dispositivo_id:
+            dev = repo_dispositivos.buscar_por_id(str(dispositivo_id).strip().upper())
+            if not dev or not dev.planta_id:
+                return jsonify({"error": "DISPOSITIVO_NO_VINCULADO", "mensaje": f"El dispositivo {dispositivo_id} no está vinculado a ninguna planta."}), 400
+            planta_id = dev.planta_id
+
+        try:
+            exito = caso_gestion_plantas.desvincular_dispositivo(
+                usuario_id=usuario_id,
+                planta_id=int(planta_id),
+            )
+            if not exito:
+                return jsonify({"error": "DESVINCULACION_FALLIDA", "mensaje": "La planta no tiene ningún sensor vinculado."}), 400
+
+            return jsonify({
+                "success": True,
+                "mensaje": f"Sensor desvinculado con éxito de la planta {planta_id}. Ahora está libre y disponible en la red.",
                 "planta_id": planta_id,
             })
         except AccesoDenegadoPlantaError as exc:

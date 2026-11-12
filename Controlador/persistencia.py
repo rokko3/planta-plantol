@@ -603,8 +603,23 @@ class RepositorioSQLite(
             cursor = conn.cursor()
             cursor.execute("UPDATE plantas SET dispositivo_id = ? WHERE id = ?", (dispositivo_id, planta_id))
             if dispositivo_id:
-                cursor.execute("UPDATE dispositivos SET planta_id = ? WHERE id = ?", (planta_id, dispositivo_id))
+                cursor.execute("UPDATE dispositivos SET planta_id = ? WHERE UPPER(id) = ?", (planta_id, dispositivo_id.upper()))
+            else:
+                cursor.execute("UPDATE dispositivos SET planta_id = NULL WHERE planta_id = ?", (planta_id,))
             conn.commit()
+
+    def eliminar_planta(self, planta_id: int) -> bool:
+        with self._conectar() as conn:
+            cursor = conn.cursor()
+            # 1. Desvincular cualquier sensor ESP32 para que quede disponible en la red
+            cursor.execute("UPDATE dispositivos SET planta_id = NULL WHERE planta_id = ?", (planta_id,))
+            # 2. Eliminar el historial de lecturas asociado a esta planta
+            cursor.execute("DELETE FROM historial_lecturas WHERE planta_id = ?", (planta_id,))
+            # 3. Eliminar el registro de la planta en la base de datos
+            cursor.execute("DELETE FROM plantas WHERE id = ?", (planta_id,))
+            filas_afectadas = cursor.rowcount
+            conn.commit()
+            return filas_afectadas > 0
 
     # --- RepositorioDispositivosPort ---
     def guardar_dispositivo(self, dispositivo: Dispositivo) -> Dispositivo:
@@ -659,6 +674,71 @@ class RepositorioSQLite(
                 )
                 for fila in cursor.fetchall()
             ]
+
+    def listar_dispositivos_disponibles(self) -> List[Dispositivo]:
+        with self._conectar() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM dispositivos 
+                WHERE planta_id IS NULL OR planta_id = 0
+                ORDER BY id ASC
+                """
+            )
+            return [
+                Dispositivo(
+                    id=fila["id"],
+                    secret_hash=fila["secret_hash"],
+                    mac=fila["mac"] or "",
+                    planta_id=fila["planta_id"],
+                    ultimo_contacto=fila["ultimo_contacto"],
+                    estado_conexion=fila["estado_conexion"],
+                )
+                for fila in cursor.fetchall()
+            ]
+
+    def registrar_o_conectar_dispositivo(
+        self, dispositivo_id: str, mac: Optional[str] = None, red_wifi: Optional[str] = None
+    ) -> Dispositivo:
+        ahora = datetime.datetime.now().isoformat()
+        dev_id = dispositivo_id.strip().upper()
+        with self._conectar() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM dispositivos WHERE UPPER(id) = ?", (dev_id,))
+            fila = cursor.fetchone()
+            if fila:
+                mac_val = mac or fila["mac"] or f"24:6F:28:{dev_id[-4:]}"
+                cursor.execute(
+                    "UPDATE dispositivos SET estado_conexion = ?, ultimo_contacto = ? WHERE UPPER(id) = ?",
+                    (CONECTADO, ahora, dev_id),
+                )
+                conn.commit()
+                return Dispositivo(
+                    id=dev_id,
+                    secret_hash=fila["secret_hash"],
+                    mac=mac_val,
+                    planta_id=fila["planta_id"],
+                    ultimo_contacto=ahora,
+                    estado_conexion=CONECTADO,
+                )
+            else:
+                mac_val = mac or f"24:6F:28:{dev_id[-4:]}"
+                cursor.execute(
+                    """
+                    INSERT INTO dispositivos (id, secret_hash, mac, planta_id, ultimo_contacto, estado_conexion)
+                    VALUES (?, ?, ?, NULL, ?, ?)
+                    """,
+                    (dev_id, "secret_hash_demo", mac_val, ahora, CONECTADO),
+                )
+                conn.commit()
+                return Dispositivo(
+                    id=dev_id,
+                    secret_hash="secret_hash_demo",
+                    mac=mac_val,
+                    planta_id=None,
+                    ultimo_contacto=ahora,
+                    estado_conexion=CONECTADO,
+                )
 
     def actualizar_ultimo_contacto(self, dispositivo_id: str, fecha_hora: str) -> None:
         with self._conectar() as conn:

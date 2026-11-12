@@ -402,40 +402,8 @@ class CasoUsoConsultarEstado:
         }
 
 
-class CasoUsoEvaluarPlantaManual:
-    """Conserva la evaluación manual de la Fase 1 detrás del puerto (Requisito R1)."""
-
-    def __init__(
-        self,
-        validador: ValidadorDeEstado,
-        tabla_referencia: TablaReferenciaPort,
-    ) -> None:
-        self._validador = validador
-        self._tabla = tabla_referencia
-
-    def evaluar_manual(
-        self,
-        especie: str,
-        luminosidad: float,
-        humedad: float,
-        temperatura: float,
-    ) -> DiagnosticoPlanta:
-        rangos = self._tabla.obtener_rangos(especie)
-        if not rangos:
-            raise EspecieNoSoportadaError(especie)
-
-        return self._validador.evaluar(
-            especie=especie,
-            rangos=rangos,
-            luminosidad=luminosidad,
-            humedad=humedad,
-            temperatura=temperatura,
-            fecha_hora=datetime.datetime.now().isoformat(),
-        )
-
-
 class CasoUsoGestionPlantas:
-    """Permite crear plantas y vincular dispositivos ESP32 mediante códigos temporales."""
+    """Permite crear, vincular, desvincular y eliminar plantas y dispositivos ESP32."""
 
     def __init__(
         self,
@@ -477,22 +445,73 @@ class CasoUsoGestionPlantas:
         usuario_id: int,
         planta_id: int,
         dispositivo_id: str,
-        codigo_vinculacion: str,
+        codigo_vinculacion: Optional[str] = None,
     ) -> bool:
         planta = self._plantas.obtener_por_id(planta_id)
         if not planta:
             raise PlantaNoEncontradaError(planta_id)
 
-        # Regla de negocio de dominio
+        # Regla de negocio de dominio: Un usuario solo accede a sus propias plantas
         self._validador.verificar_propiedad_planta(planta, usuario_id)
 
-        # Valida y consume el código temporal de vinculación
-        dev_id_autorizado = self._dispositivos.consumir_codigo_vinculacion(codigo_vinculacion)
-        if not dev_id_autorizado or dev_id_autorizado.upper() != dispositivo_id.upper():
-            return False
+        # Si se suministra un código de vinculación temporal (compatibilidad previa), validarlo
+        if codigo_vinculacion:
+            dev_id_autorizado = self._dispositivos.consumir_codigo_vinculacion(codigo_vinculacion)
+            if not dev_id_autorizado or dev_id_autorizado.upper() != dispositivo_id.upper():
+                return False
 
+        # Vinculación directa autorizada para el propietario
         self._plantas.vincular_dispositivo(planta_id, dispositivo_id)
         return True
+
+    def desvincular_dispositivo(
+        self,
+        usuario_id: int,
+        planta_id: int,
+    ) -> bool:
+        planta = self._plantas.obtener_por_id(planta_id)
+        if not planta:
+            raise PlantaNoEncontradaError(planta_id)
+
+        # Regla de negocio de dominio: Un usuario solo accede a sus propias plantas
+        self._validador.verificar_propiedad_planta(planta, usuario_id)
+
+        if not planta.dispositivo_id:
+            return False
+
+        dispositivo_id = planta.dispositivo_id
+        # Desvincula la planta (dispositivo_id = None)
+        self._plantas.vincular_dispositivo(planta_id, None)
+
+        # Libera el dispositivo para que vuelva a estar disponible en la red
+        dev = self._dispositivos.buscar_por_id(dispositivo_id)
+        if dev:
+            dev.planta_id = None
+            self._dispositivos.guardar_dispositivo(dev)
+
+        return True
+
+    def eliminar_planta(
+        self,
+        usuario_id: int,
+        planta_id: int,
+    ) -> bool:
+        planta = self._plantas.obtener_por_id(planta_id)
+        if not planta:
+            raise PlantaNoEncontradaError(planta_id)
+
+        # Regla de negocio de dominio: Un usuario solo accede y gestiona sus propias plantas
+        self._validador.verificar_propiedad_planta(planta, usuario_id)
+
+        # Si tiene sensor vinculado, liberarlo en la red
+        if planta.dispositivo_id:
+            dev = self._dispositivos.buscar_por_id(planta.dispositivo_id)
+            if dev:
+                dev.planta_id = None
+                self._dispositivos.guardar_dispositivo(dev)
+
+        # Eliminar la planta de la persistencia
+        return self._plantas.eliminar_planta(planta_id)
 
 
 class CasoUsoAutenticacion:

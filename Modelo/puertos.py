@@ -52,19 +52,6 @@ class ConsultarEstadoPort(Protocol):
 
 
 @runtime_checkable
-class EvaluarPlantaPort(Protocol):
-    """Puerto de entrada para evaluación manual de salud vegetal (Requisito R1)."""
-    def evaluar_manual(
-        self,
-        especie: str,
-        luminosidad: float,
-        humedad: float,
-        temperatura: float,
-    ) -> DiagnosticoPlanta:
-        ...
-
-
-@runtime_checkable
 class GestionPlantasPort(Protocol):
     """Puerto de entrada para administrar plantas y vinculación de hardware."""
     def crear_planta(
@@ -82,7 +69,21 @@ class GestionPlantasPort(Protocol):
         usuario_id: int,
         planta_id: int,
         dispositivo_id: str,
-        codigo_vinculacion: str,
+        codigo_vinculacion: Optional[str] = None,
+    ) -> bool:
+        ...
+
+    def desvincular_dispositivo(
+        self,
+        usuario_id: int,
+        planta_id: int,
+    ) -> bool:
+        ...
+
+    def eliminar_planta(
+        self,
+        usuario_id: int,
+        planta_id: int,
     ) -> bool:
         ...
 
@@ -154,6 +155,9 @@ class RepositorioPlantasPort(Protocol):
     def vincular_dispositivo(self, planta_id: int, dispositivo_id: Optional[str]) -> None:
         ...
 
+    def eliminar_planta(self, planta_id: int) -> bool:
+        ...
+
 
 @runtime_checkable
 class RepositorioUsuariosPort(Protocol):
@@ -178,6 +182,14 @@ class RepositorioDispositivosPort(Protocol):
         ...
 
     def listar_dispositivos(self) -> List[Dispositivo]:
+        ...
+
+    def listar_dispositivos_disponibles(self) -> List[Dispositivo]:
+        ...
+
+    def registrar_o_conectar_dispositivo(
+        self, dispositivo_id: str, mac: Optional[str] = None, red_wifi: Optional[str] = None
+    ) -> Dispositivo:
         ...
 
     def actualizar_ultimo_contacto(self, dispositivo_id: str, fecha_hora: str) -> None:

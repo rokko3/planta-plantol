@@ -33,7 +33,6 @@ from Modelo.entidades import CONECTADO, Dispositivo, Lectura, Planta, SIN_RESPUE
 from Modelo.negocio import (
     CasoUsoAutenticacion,
     CasoUsoConsultarEstado,
-    CasoUsoEvaluarPlantaManual,
     CasoUsoGestionPlantas,
     CasoUsoRegistrarLectura,
     ValidadorDeEstado,
@@ -186,10 +185,6 @@ def crear_app(
         historial_lecturas=historial_lecturas,
         repo_dispositivos=repositorio_sqlite,
     )
-    caso_evaluar_manual = CasoUsoEvaluarPlantaManual(
-        validador=validador_estado,
-        tabla_referencia=tabla_referencia,
-    )
     caso_gestion_plantas = CasoUsoGestionPlantas(
         validador=validador_estado,
         repo_plantas=repositorio_sqlite,
@@ -214,7 +209,6 @@ def crear_app(
     bp_api = crear_blueprint_api(
         caso_registrar_lectura=caso_registrar_lectura,
         caso_consultar_estado=caso_consultar_estado,
-        caso_evaluar_manual=caso_evaluar_manual,
         caso_gestion_plantas=caso_gestion_plantas,
         caso_autenticacion=caso_autenticacion,
         tabla_referencia=tabla_referencia,
