@@ -20,7 +20,6 @@ from Modelo.entidades import (
     OPTIMO,
     SALUDABLE,
     AccesoDenegadoPlantaError,
-    DiagnosticoPlanta,
     Dispositivo,
     DispositivoNoVinculadoError,
     EspecieNoSoportadaError,
@@ -29,7 +28,6 @@ from Modelo.entidades import (
     Planta,
     PlantaNoEncontradaError,
     RangosEspecie,
-    ResultadoParametro,
 )
 from Modelo.negocio import (
     CasoUsoConsultarEstado,
@@ -183,6 +181,12 @@ class FakeRepositorioDispositivos(RepositorioDispositivosPort):
 
     def consumir_codigo_vinculacion(self, codigo: str):
         return self._codigos.pop(codigo, None)
+
+    def guardar_token_pairing(self, token: str, usuario_id: int) -> None:
+        self._codigos[token] = f"USER-{usuario_id}"
+
+    def validar_y_consumir_token_pairing(self, token: str) -> bool:
+        return self._codigos.pop(token, None) is not None
 
 
 # =====================================================================

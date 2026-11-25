@@ -65,6 +65,11 @@
         </div>
 
         <div class="topbar-right">
+          <div class="gamification-pill" id="btnVerPuntos" onclick="mostrarModalPuntos()" title="Ver historial de puntos y recompensas">
+            <span class="pill-icon">🌱</span>
+            <span><strong id="topbarPuntosVal">0</strong> pts</span>
+          </div>
+
           <div class="user-chip" id="userChip">
             <span class="user-avatar" id="userInitial">F</span>
             <div class="user-info">
@@ -380,6 +385,46 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="cerrarModalHistorial()">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL DE PUNTOS Y GAMIFICACIÓN -->
+  <div id="modalPuntos" class="modal-backdrop" style="display: none;" onclick="cerrarModalPuntos(event)">
+    <div class="modal-dialog" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div>
+          <h3>Billetera de Cuidado Botánico</h3>
+          <p>Historial de recompensas por estabilidad, rescates y saludos diarios</p>
+        </div>
+        <button class="modal-close" onclick="cerrarModalPuntos()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="metric-card" style="margin-bottom: 16px;">
+          <div class="metric-body">
+            <span class="metric-label">Saldo Acumulado</span>
+            <strong class="metric-value" id="modalSaldoPuntosVal">0 pts</strong>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table class="history-table">
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Evento / Motivo</th>
+                <th>Cantidad</th>
+              </tr>
+            </thead>
+            <tbody id="modalPuntosBody">
+              <tr>
+                <td colspan="3" class="text-center">Cargando movimientos...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="cerrarModalPuntos()">Cerrar</button>
       </div>
     </div>
   </div>

@@ -18,6 +18,23 @@ SALUDABLE = "SALUDABLE"
 EN_RIESGO = "EN_RIESGO"
 CRITICO = "CRITICO"
 
+# Estados emocionales de la planta (Gamificación)
+EMOCION_RADIANTE = "RADIANTE"
+EMOCION_SEDIENTA = "SEDIENTA"
+EMOCION_ACALORADA = "ACALORADA"
+EMOCION_CON_FRIO = "CON FRÍO"
+EMOCION_DURMIENDO = "DURMIENDO"
+EMOCION_EN_PELIGRO = "EN PELIGRO"
+
+# Tipos y motivos de transacciones de puntos (Gamificación)
+TIPO_RECOMPENSA = "RECOMPENSA"
+TIPO_PENALIZACION = "PENALIZACION"
+
+MOTIVO_CUIDADO_CONTINUO = "CUIDADO_CONTINUO"
+MOTIVO_RESCATE_HUMEDAD = "RESCATE_HUMEDAD"
+MOTIVO_SALUDO_DIARIO = "SALUDO_DIARIO"
+MOTIVO_PENALIZACION_DESCUIDO = "PENALIZACION_DESCUIDO"
+
 # Estados de conectividad del dispositivo IoT
 CONECTADO = "CONECTADO"
 SIN_RESPUESTA = "SIN_RESPUESTA"
@@ -73,6 +90,26 @@ class DispositivoNoVinculadoError(DominioError):
         super().__init__(f"El dispositivo '{dispositivo_id}' no está vinculado a ninguna planta activa.")
 
 
+class SaludoYaRealizadoHoyError(DominioError):
+    """Regla de gamificación: un usuario solo puede saludar a cada planta una vez al día."""
+    def __init__(self, usuario_id: int, planta_id: int, fecha: str) -> None:
+        self.usuario_id = usuario_id
+        self.planta_id = planta_id
+        self.fecha = fecha
+        super().__init__(
+            f"El usuario {usuario_id} ya saludó a la planta {planta_id} en la fecha {fecha}."
+        )
+
+
+class PuntosInsuficientesError(DominioError):
+    def __init__(self, saldo_actual: int, cantidad: int) -> None:
+        self.saldo_actual = saldo_actual
+        self.cantidad = cantidad
+        super().__init__(
+            f"Saldo insuficiente ({saldo_actual} puntos) para descontar {cantidad} puntos."
+        )
+
+
 # =====================================================================
 # Entidades del Dominio
 # =====================================================================
@@ -100,17 +137,21 @@ class ResultadoParametro:
 
 @dataclass(frozen=True)
 class DiagnosticoPlanta:
-    """Diagnóstico consolidado del estado de salud de una planta."""
+    """Diagnóstico consolidado del estado de salud y gamificación de una planta."""
     especie: str
     estado_global: str
     parametros: List[ResultadoParametro] = field(default_factory=list)
     fecha_hora: Optional[str] = None
+    hp: int = 100
+    estado_emocional: str = EMOCION_RADIANTE
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "especie": self.especie,
             "estado_global": self.estado_global,
             "fecha_hora": self.fecha_hora,
+            "hp": self.hp,
+            "estado_emocional": self.estado_emocional,
             "parametros": [
                 {
                     "nombre": p.nombre,
@@ -133,6 +174,52 @@ class Lectura:
     temperatura: float
     id: Optional[int] = None
     planta_id: Optional[int] = None
+    humedad_suelo: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class TransaccionPuntos:
+    """Registro inmutable de movimiento de saldo en la billetera de gamificación."""
+    usuario_id: int
+    cantidad: int
+    motivo: str
+    evento: str
+    fecha: str
+    tipo: str  # TIPO_RECOMPENSA o TIPO_PENALIZACION
+    id: Optional[int] = None
+    planta_id: Optional[int] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "usuario_id": self.usuario_id,
+            "planta_id": self.planta_id,
+            "cantidad": self.cantidad,
+            "motivo": self.motivo,
+            "evento": self.evento,
+            "fecha": self.fecha,
+            "tipo": self.tipo,
+        }
+
+
+@dataclass
+class EpisodioGamificacion:
+    """Episodio continuo para evaluar estabilidad o descuido sin duplicar eventos."""
+    planta_id: int
+    tipo_episodio: str  # "SALUDABLE_CONTINUO", "CRITICO_CONTINUO", "HUMEDAD_BAJA"
+    inicio_utc: str
+    ultimo_registro_utc: str
+    recompensado_penalizado: bool = False
+    activo: bool = True
+    id: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class ResumenGamificacion:
+    """Resumen de gamificación entregado a la vista."""
+    usuario_id: int
+    saldo_puntos: int
+    total_transacciones: int = 0
 
 
 @dataclass

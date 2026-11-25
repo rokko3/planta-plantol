@@ -11,7 +11,8 @@ from __future__ import annotations
 import datetime
 from functools import wraps
 import os
-from typing import Any, Dict
+import socket
+from typing import Optional
 
 from flask import Blueprint, jsonify, request
 
@@ -21,16 +22,37 @@ from Modelo.entidades import (
     EspecieNoSoportadaError,
     LecturaInvalidaError,
     PlantaNoEncontradaError,
+    SaludoYaRealizadoHoyError,
 )
 from Modelo.puertos import (
     AutenticacionPort,
     ConsultarEstadoPort,
     EmisorTokenPort,
+    GamificacionPort,
     GestionPlantasPort,
     RegistrarLecturaPort,
     RepositorioDispositivosPort,
     TablaReferenciaPort,
 )
+
+
+def obtener_ip_local() -> str:
+    """Detecta la IP local en red LAN para permitir aprovisionamiento directo del ESP32."""
+    host_env = os.environ.get("SERVER_HOST") or os.environ.get("HOST_IP")
+    if host_env:
+        return host_env.strip()
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        pass
+    try:
+        return socket.gethostbyname(socket.gethostname())
+    except Exception:
+        return "127.0.0.1"
 
 
 def crear_blueprint_api(
@@ -42,6 +64,7 @@ def crear_blueprint_api(
     repo_dispositivos: RepositorioDispositivosPort,
     emisor_token: EmisorTokenPort,
     tipo_fuente_actual: str = "csv",
+    caso_gamificacion: Optional[GamificacionPort] = None,
 ) -> Blueprint:
     """Crea y configura el Blueprint unificado de la API REST."""
     bp = Blueprint("api", __name__, url_prefix="/api")
@@ -347,81 +370,63 @@ def crear_blueprint_api(
             for d in dispositivos
         ])
 
-    @bp.route("/dispositivos/bluetooth", methods=["GET"])
-    @requiere_jwt_usuario
-    def escanear_bluetooth(usuario_id: int):
+    # =====================================================================
+    # Rutas de Información del Servidor y Aprovisionamiento
+    # =====================================================================
+
+    @bp.route("/servidor/info", methods=["GET"])
+    def info_servidor():
         """
-        Simula el escaneo BLE de dispositivos ESP32 en las inmediaciones.
-        Permite al usuario ver los dispositivos físicos a su alrededor.
+        Informa la IP local LAN y el puerto del servidor Flask para que
+        el frontend Web Bluetooth pueda configurar el host del backend en el
+        ESP32 de forma 100% automática, sin manipulación técnica del usuario.
         """
-        dispositivos_bd = repo_dispositivos.listar_dispositivos()
-        candidatos = [d.id for d in dispositivos_bd]
-        for extra in ["ESP32-B8E1", "ESP32-F41A"]:
-            if extra not in candidatos:
-                candidatos.append(extra)
-
-        resultado = []
-        for idx, dev_id in enumerate(candidatos):
-            rssi = -48 - (idx * 7)
-            dev_bd = repo_dispositivos.buscar_por_id(dev_id)
-            vinculado = (dev_bd.planta_id is not None and dev_bd.planta_id != 0) if dev_bd else False
-            resultado.append({
-                "id": dev_id,
-                "nombre_ble": f"Plantol-ESP32-{dev_id.split('-')[-1]}",
-                "mac": dev_bd.mac if (dev_bd and dev_bd.mac) else f"24:6F:28:FE:{dev_id[-4:]}",
-                "rssi": f"{rssi} dBm",
-                "vinculado": vinculado,
-                "estado_ble": "Enlazado a planta" if vinculado else "Disponible para conectar",
-            })
-        return jsonify(resultado)
-
-    @bp.route("/dispositivos/gatt-provisionar", methods=["POST"])
-    @requiere_jwt_usuario
-    def provisionar_gatt(usuario_id: int):
-        """
-        Aprovisionamiento Wi-Fi mediante conexión Bluetooth GATT.
-        El usuario envía las credenciales de la red (SSID y Password) al ESP32.
-        El ESP32 se conecta a la red Wi-Fi y queda en la red listo para agregar.
-        """
-        payload = request.get_json(silent=True) or {}
-        dispositivo_id = payload.get("dispositivo_id", "").strip().upper()
-        ssid = payload.get("ssid", "").strip()
-        password = payload.get("password", "").strip()
-
-        if not dispositivo_id or not ssid:
-            return jsonify({"error": "DATOS_INCOMPLETOS", "mensaje": "Se requiere 'dispositivo_id' y 'ssid'"}), 400
-
-        dev = repo_dispositivos.registrar_o_conectar_dispositivo(dispositivo_id=dispositivo_id, red_wifi=ssid)
-
+        req_host = request.host.split(":")[0] if request.host else ""
+        if req_host and req_host not in ("localhost", "127.0.0.1"):
+            ip = req_host
+        else:
+            ip = obtener_ip_local()
+        puerto = int(os.environ.get("PORT", 5000))
         return jsonify({
-            "success": True,
-            "mensaje": f"Credenciales Wi-Fi transmitidas mediante característica GATT. Dispositivo {dispositivo_id} conectado a la red '{ssid}' y disponible para agregar.",
-            "dispositivo": {
-                "id": dev.id,
-                "mac": dev.mac,
-                "estado_conexion": dev.estado_conexion,
-                "red_wifi": ssid,
-            },
-        })
+            "ip": ip,
+            "puerto": puerto,
+            "host_sugerido": f"http://{ip}:{puerto}",
+            "estado": "ACTIVO",
+        }), 200
 
     @bp.route("/dispositivos/generar-token-pairing", methods=["POST"])
     @requiere_jwt_usuario
     def generar_token_pairing(usuario_id: int):
         token = f"PAIR-{os.urandom(4).hex().upper()}"
+        repo_dispositivos.guardar_token_pairing(token, usuario_id)
         return jsonify({"success": True, "token": token}), 200
 
     @bp.route("/dispositivos/reclamar", methods=["POST"])
     def reclamar_dispositivo():
         """
         Endpoint invocado directamente por el microcontrolador ESP32 tras conectarse a Wi-Fi.
-        Registra el hardware en la base de datos para que aparezca como disponible en la red.
+        Exige el token de emparejamiento emitido durante la sesión BLE del usuario.
+        Evita que cualquier dispositivo ajeno se vincule conociendo solo una MAC.
         """
         payload = request.get_json(silent=True) or {}
         mac = payload.get("mac", "").strip().upper()
+        token = payload.get("token", "").strip().upper()
+
         if not mac:
             return jsonify({"error": "MAC_REQUERIDA", "mensaje": "Se requiere el parámetro 'mac'"}), 400
 
-        dev = repo_dispositivos.registrar_o_conectar_dispositivo(dispositivo_id=mac, mac=mac)
+        if not token or not repo_dispositivos.validar_y_consumir_token_pairing(token):
+            return (
+                jsonify({
+                    "error": "TOKEN_PAIRING_INVALIDO",
+                    "mensaje": "Se requiere un token de emparejamiento válido emitido por la sesión del usuario.",
+                }),
+                401,
+            )
+
+        dev = repo_dispositivos.registrar_o_conectar_dispositivo(
+            dispositivo_id=mac, mac=mac, liberar_planta=True
+        )
         return jsonify({
             "success": True,
             "mensaje": f"Dispositivo {mac} registrado y en línea exitosamente.",
@@ -563,6 +568,7 @@ def crear_blueprint_api(
         raw_lux = payload.get("luminosidad") if "luminosidad" in payload else payload.get("lux")
         raw_hum = payload.get("humedad") if "humedad" in payload else payload.get("humidity")
         raw_temp = payload.get("temperatura") if "temperatura" in payload else payload.get("temperature")
+        raw_suelo = payload.get("humedad_suelo") if "humedad_suelo" in payload else payload.get("suelo")
 
         if raw_lux is None or raw_hum is None or raw_temp is None:
             return (
@@ -577,6 +583,7 @@ def crear_blueprint_api(
             lux = float(raw_lux)
             humedad = float(raw_hum)
             temp = float(raw_temp)
+            hum_suelo = float(raw_suelo) if raw_suelo is not None else None
         except (ValueError, TypeError):
             return (
                 jsonify({
@@ -595,6 +602,7 @@ def crear_blueprint_api(
                 luminosidad=lux,
                 humedad=humedad,
                 temperatura=temp,
+                humedad_suelo=hum_suelo,
             )
 
             return (
@@ -607,6 +615,7 @@ def crear_blueprint_api(
                         "luminosidad": lux,
                         "humedad": humedad,
                         "temperatura": temp,
+                        "humedad_suelo": hum_suelo,
                     },
                     "diagnostico": diagnostico.to_dict(),
                 }),
@@ -641,6 +650,54 @@ def crear_blueprint_api(
                 }),
                 400,
             )
+
+    # =====================================================================
+    # Rutas de Gamificación (Puntos, Saludos, Recompensas)
+    # =====================================================================
+
+    @bp.route("/plantas/<int:planta_id>/saludar", methods=["POST"])
+    @requiere_jwt_usuario
+    def saludar_planta(usuario_id: int, planta_id: int):
+        if not caso_gamificacion:
+            return jsonify({"error": "MODULO_NO_DISPONIBLE", "mensaje": "Gamificación no inicializada."}), 503
+
+        try:
+            resultado = caso_gamificacion.saludar_planta(usuario_id=usuario_id, planta_id=planta_id)
+            return jsonify({
+                "success": True,
+                **resultado,
+            }), 200
+        except SaludoYaRealizadoHoyError as exc:
+            return jsonify({"error": "SALUDO_YA_REALIZADO", "mensaje": str(exc)}), 400
+        except AccesoDenegadoPlantaError as exc:
+            return jsonify({"error": "ACCESO_DENEGADO", "mensaje": str(exc)}), 403
+        except PlantaNoEncontradaError as exc:
+            return jsonify({"error": "PLANTA_NO_ENCONTRADA", "mensaje": str(exc)}), 404
+
+    @bp.route("/gamificacion/puntos", methods=["GET"])
+    @requiere_jwt_usuario
+    def consultar_puntos(usuario_id: int):
+        if not caso_gamificacion:
+            return jsonify({"saldo_puntos": 0}), 200
+        saldo = caso_gamificacion.consultar_saldo(usuario_id)
+        return jsonify({
+            "usuario_id": usuario_id,
+            "saldo_puntos": saldo,
+        }), 200
+
+    @bp.route("/gamificacion/historial", methods=["GET"])
+    @requiere_jwt_usuario
+    def consultar_historial_puntos(usuario_id: int):
+        if not caso_gamificacion:
+            return jsonify({"historial": []}), 200
+        limite = request.args.get("limite", 50, type=int)
+        historial = caso_gamificacion.consultar_historial_puntos(usuario_id, limite=limite)
+        saldo = caso_gamificacion.consultar_saldo(usuario_id)
+        return jsonify({
+            "usuario_id": usuario_id,
+            "saldo_puntos": saldo,
+            "historial": historial,
+        }), 200
 
     return bp
 

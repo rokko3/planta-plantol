@@ -26,7 +26,7 @@ class TestAPI(unittest.TestCase):
         self.temp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
         self.temp_db.close()
 
-        self.app = crear_app(tipo_tabla="bd", ruta_db=self.temp_db.name)
+        self.app = crear_app(tipo_tabla="bd", ruta_db=self.temp_db.name, seed_demo=True)
         self.app.config["TESTING"] = True
         self.client = self.app.test_client()
 
@@ -279,6 +279,142 @@ class TestAPI(unittest.TestCase):
             headers={"Authorization": f"Bearer {token_dev}"},
         )
         self.assertEqual(resp_lectura_relinked.status_code, 201)
+
+    def test_info_servidor_ip_y_puerto(self):
+        resp = self.client.get("/api/servidor/info")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.get_json()
+        self.assertIn("ip", data)
+        self.assertIn("puerto", data)
+        self.assertIn("host_sugerido", data)
+        self.assertTrue(data["host_sugerido"].startswith("http://"))
+
+    def test_telemetria_con_humedad_suelo_y_diagnostico_hp_emocion(self):
+        resp_token = self.client.post("/api/dispositivos/ESP32-A7F9/token")
+        token_dev = resp_token.get_json()["token"]
+
+        # Para Cactus (10-30% humedad), suelo a 22.0% es óptimo
+        resp_lectura = self.client.post(
+            "/api/dispositivos/ESP32-A7F9/lecturas",
+            json={
+                "luminosidad": 6000.0,
+                "humedad": 22.0,
+                "temperatura": 24.0,
+                "humedad_suelo": 22.0,
+            },
+            headers={"Authorization": f"Bearer {token_dev}"},
+        )
+        self.assertEqual(resp_lectura.status_code, 201)
+        datos = resp_lectura.get_json()
+        self.assertTrue(datos["success"])
+        diag = datos["diagnostico"]
+        self.assertIn("hp", diag)
+        self.assertIn("estado_emocional", diag)
+        self.assertEqual(diag["hp"], 100)
+        self.assertEqual(diag["estado_emocional"], "RADIANTE")
+
+    def test_saludo_diario_y_consulta_gamificacion(self):
+        # 1. Login felipe (dueño de planta 1 por seed inicial)
+        resp_login = self.client.post(
+            "/api/auth/login",
+            json={"username": "felipe", "password": "plantol123"},
+        )
+        self.assertEqual(resp_login.status_code, 200)
+        token_user = resp_login.get_json()["token"]
+        headers = {"Authorization": f"Bearer {token_user}"}
+
+        # 2. Saludar a su planta 1 -> 200 OK con +1 punto
+        resp_saludo = self.client.post(
+            "/api/plantas/1/saludar",
+            headers=headers,
+        )
+        self.assertEqual(resp_saludo.status_code, 200)
+        saludo_data = resp_saludo.get_json()
+        self.assertTrue(saludo_data["success"])
+        self.assertEqual(saludo_data["puntos_ganados"], 1)
+
+        # 3. Intentar saludar de nuevo el mismo día -> 400 Bad Request (idempotente)
+        resp_dup = self.client.post(
+            "/api/plantas/1/saludar",
+            headers=headers,
+        )
+        self.assertEqual(resp_dup.status_code, 400)
+        self.assertEqual(resp_dup.get_json()["error"], "SALUDO_YA_REALIZADO")
+        self.assertIn("ya saludó", resp_dup.get_json()["mensaje"].lower())
+
+        # 4. Consultar saldo de puntos
+        resp_saldo = self.client.get("/api/gamificacion/puntos", headers=headers)
+        self.assertEqual(resp_saldo.status_code, 200)
+        self.assertEqual(resp_saldo.get_json()["saldo_puntos"], 1)
+
+        # 5. Consultar historial de transacciones
+        resp_hist = self.client.get("/api/gamificacion/historial", headers=headers)
+        self.assertEqual(resp_hist.status_code, 200)
+        transacciones = resp_hist.get_json()["historial"]
+        self.assertEqual(len(transacciones), 1)
+        self.assertEqual(transacciones[0]["motivo"], "SALUDO_DIARIO")
+
+    def test_pairing_seguro_y_reclamar_dispositivo(self):
+        # 1. Login felipe para obtener token de usuario
+        resp_login = self.client.post(
+            "/api/auth/login",
+            json={"username": "felipe", "password": "plantol123"},
+        )
+        token_user = resp_login.get_json()["token"]
+        headers_user = {"Authorization": f"Bearer {token_user}"}
+
+        # 2. Generar token de emparejamiento desde la sesión del usuario
+        resp_gen = self.client.post("/api/dispositivos/generar-token-pairing", headers=headers_user)
+        self.assertEqual(resp_gen.status_code, 200)
+        token_pairing = resp_gen.get_json()["token"]
+        self.assertTrue(token_pairing.startswith("PAIR-"))
+
+        # 3. Intentar reclamar sin token -> HTTP 401
+        resp_sin_token = self.client.post(
+            "/api/dispositivos/reclamar",
+            json={"mac": "ESP32-NUEVO-01"},
+        )
+        self.assertEqual(resp_sin_token.status_code, 401)
+        self.assertEqual(resp_sin_token.get_json()["error"], "TOKEN_PAIRING_INVALIDO")
+
+        # 4. Intentar reclamar con token falso -> HTTP 401
+        resp_token_falso = self.client.post(
+            "/api/dispositivos/reclamar",
+            json={"mac": "ESP32-NUEVO-01", "token": "PAIR-FALSO123"},
+        )
+        self.assertEqual(resp_token_falso.status_code, 401)
+
+        # 5. Reclamar con el token de pairing legítimo -> HTTP 200
+        resp_reclamar = self.client.post(
+            "/api/dispositivos/reclamar",
+            json={"mac": "ESP32-NUEVO-01", "token": token_pairing},
+        )
+        self.assertEqual(resp_reclamar.status_code, 200)
+        self.assertTrue(resp_reclamar.get_json()["success"])
+
+        # 6. Intentar REUTILIZAR el mismo token de pairing -> HTTP 401 (token ya consumido)
+        resp_reuso = self.client.post(
+            "/api/dispositivos/reclamar",
+            json={"mac": "ESP32-NUEVO-02", "token": token_pairing},
+        )
+        self.assertEqual(resp_reuso.status_code, 401)
+
+        # 7. El dispositivo reclamado ahora puede obtener su token JWT
+        resp_dev_jwt = self.client.post("/api/dispositivos/ESP32-NUEVO-01/token")
+        self.assertEqual(resp_dev_jwt.status_code, 200)
+        dev_jwt = resp_dev_jwt.get_json()["token"]
+
+        # 8. Un dispositivo desconocido NO puede obtener token JWT -> HTTP 404
+        resp_no_dev = self.client.post("/api/dispositivos/ESP32-DESCONOCIDO/token")
+        self.assertEqual(resp_no_dev.status_code, 404)
+
+        # 9. Telemetría con token malformado o falso -> HTTP 401
+        resp_telemetria_falsa = self.client.post(
+            "/api/dispositivos/ESP32-NUEVO-01/lecturas",
+            json={"luminosidad": 5000.0, "humedad": 25.0, "temperatura": 24.0},
+            headers={"Authorization": "Bearer token_falso_o_corrupto"},
+        )
+        self.assertEqual(resp_telemetria_falsa.status_code, 401)
 
 
 if __name__ == "__main__":

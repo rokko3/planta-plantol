@@ -256,8 +256,179 @@ button, input, select, textarea {
 }
 
 /* ==========================================================================
-   Contenido Principal & Barra Superior
+   Gamificación & Sistema de Cuidado (Puntos, HP, Emociones)
    ========================================================================== */
+
+.gamification-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+  border: 1px solid #10b981;
+  color: #065f46;
+  padding: 6px 14px;
+  border-radius: 9999px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: var(--transition-fast);
+  box-shadow: 0 2px 6px rgba(16, 185, 129, 0.15);
+}
+
+.gamification-pill:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(16, 185, 129, 0.25);
+  background: #d1fae5;
+}
+
+.gamification-pill .pill-icon {
+  font-size: 1rem;
+}
+
+/* Indicador de Salud (HP) */
+.hp-gauge {
+  margin: 10px 0;
+  background: var(--bg-card-subtle);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+}
+
+.hp-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.76rem;
+  color: var(--text-dark);
+  margin-bottom: 5px;
+}
+
+.hp-progress {
+  width: 100%;
+  height: 8px;
+  background: #e2e8f0;
+  border-radius: 9999px;
+  overflow: hidden;
+}
+
+.hp-fill {
+  height: 100%;
+  border-radius: 9999px;
+  transition: width 0.4s ease-in-out;
+}
+
+.hp-fill.hp-high {
+  background: linear-gradient(90deg, #10b981, #059669);
+}
+
+.hp-fill.hp-mid {
+  background: linear-gradient(90deg, #f59e0b, #d97706);
+}
+
+.hp-fill.hp-low {
+  background: linear-gradient(90deg, #ef4444, #dc2626);
+}
+
+/* Badges de Estado Emocional */
+.badge-emocion {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 12px;
+  margin-top: 4px;
+}
+
+.badge-emocion.emocion-radiante {
+  background: #f0fdf4;
+  color: #166534;
+  border: 1px solid #bbf7d0;
+}
+
+.badge-emocion.emocion-sedienta {
+  background: #eff6ff;
+  color: #1e40af;
+  border: 1px solid #bfdbfe;
+}
+
+.badge-emocion.emocion-acalorada {
+  background: #fff7ed;
+  color: #c2410c;
+  border: 1px solid #fed7aa;
+}
+
+.badge-emocion.emocion-con-frio {
+  background: #f0f9ff;
+  color: #0369a1;
+  border: 1px solid #bae6fd;
+}
+
+.badge-emocion.emocion-durmiendo {
+  background: #f8fafc;
+  color: #475569;
+  border: 1px solid #e2e8f0;
+}
+
+.badge-emocion.emocion-en-peligro {
+  background: #fef2f2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+  animation: pulse-danger 2s infinite;
+}
+
+@keyframes pulse-danger {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+/* Botón Saludar Planta */
+.btn-saludo {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: #ffffff;
+  border: none;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: var(--transition-fast);
+}
+
+.btn-saludo:hover {
+  background: #059669;
+  transform: translateY(-1px);
+}
+
+.btn-saludo-done {
+  background: #e2e8f0;
+  color: #64748b;
+  border: 1px solid #cbd5e1;
+  cursor: default;
+}
+
+.btn-saludo-done:hover {
+  background: #e2e8f0;
+  transform: none;
+}
+
+/* Historial de Puntos Modal */
+.puntos-badge-delta {
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+}
+
+.puntos-badge-delta.pos {
+  background: #ecfdf5;
+  color: #059669;
+}
+
+.puntos-badge-delta.neg {
+  background: #fef2f2;
+  color: #dc2626;
+}
 
 .main-content {
   flex-grow: 1;

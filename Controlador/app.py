@@ -24,6 +24,7 @@ from flask_cors import CORS
 from Controlador.api import crear_blueprint_api
 from Controlador.persistencia import (
     HistorialLecturasBD,
+    RepositorioGamificacionBD,
     RepositorioSQLite,
     ServicioJWT,
     TablaReferenciaBD,
@@ -33,6 +34,7 @@ from Modelo.entidades import CONECTADO, Dispositivo, Lectura, Planta, SIN_RESPUE
 from Modelo.negocio import (
     CasoUsoAutenticacion,
     CasoUsoConsultarEstado,
+    CasoUsoGamificacion,
     CasoUsoGestionPlantas,
     CasoUsoRegistrarLectura,
     ValidadorDeEstado,
@@ -127,6 +129,7 @@ def crear_app(
     ruta_db: str = None,
     ruta_csv: str = None,
     secret_key: str = None,
+    seed_demo: bool = False,
 ) -> Flask:
     """
     Fábrica de composición. Ensambla adaptadores con puertos según configuración.
@@ -167,7 +170,9 @@ def crear_app(
     # 3. Adaptadores de salida
     historial_lecturas = HistorialLecturasBD(ruta_db=ruta_db)
     repositorio_sqlite = RepositorioSQLite(ruta_db=ruta_db)
-    emisor_token = ServicioJWT(clave_secreta=secret_key or "plantol_super_secret_key_2026_arquitectura_hexagonal_segura_32b")
+    repositorio_gamificacion = RepositorioGamificacionBD(ruta_db=ruta_db)
+    jwt_secret = secret_key or os.environ.get("JWT_SECRET_KEY", "plantol_super_secret_key_2026_arquitectura_hexagonal_segura_32b")
+    emisor_token = ServicioJWT(clave_secreta=jwt_secret)
 
     # 4. Dominio puro y casos de uso (Puertos de entrada)
     validador_estado = ValidadorDeEstado()
@@ -178,12 +183,14 @@ def crear_app(
         repo_plantas=repositorio_sqlite,
         repo_dispositivos=repositorio_sqlite,
         historial_lecturas=historial_lecturas,
+        repo_gamificacion=repositorio_gamificacion,
     )
     caso_consultar_estado = CasoUsoConsultarEstado(
         validador=validador_estado,
         repo_plantas=repositorio_sqlite,
         historial_lecturas=historial_lecturas,
         repo_dispositivos=repositorio_sqlite,
+        repo_gamificacion=repositorio_gamificacion,
     )
     caso_gestion_plantas = CasoUsoGestionPlantas(
         validador=validador_estado,
@@ -195,15 +202,21 @@ def crear_app(
         repo_usuarios=repositorio_sqlite,
         emisor_token=emisor_token,
     )
-
-    # 5. Siembra de datos iniciales
-    sembrar_datos_iniciales(
-        repo_sqlite=repositorio_sqlite,
-        historial_bd=historial_lecturas,
+    caso_gamificacion = CasoUsoGamificacion(
+        repo_gamificacion=repositorio_gamificacion,
+        repo_plantas=repositorio_sqlite,
         validador=validador_estado,
-        tabla_ref=tabla_referencia,
-        caso_auth=caso_autenticacion,
     )
+
+    # 5. Siembra de datos iniciales (solo si se solicita explícitamente para demos/tests)
+    if seed_demo:
+        sembrar_datos_iniciales(
+            repo_sqlite=repositorio_sqlite,
+            historial_bd=historial_lecturas,
+            validador=validador_estado,
+            tabla_ref=tabla_referencia,
+            caso_auth=caso_autenticacion,
+        )
 
     # 6. Adaptador de entrada: API REST
     bp_api = crear_blueprint_api(
@@ -215,6 +228,7 @@ def crear_app(
         repo_dispositivos=repositorio_sqlite,
         emisor_token=emisor_token,
         tipo_fuente_actual=tipo_tabla,
+        caso_gamificacion=caso_gamificacion,
     )
 
     # 7. Configuración de Flask y Frontend (Vista)

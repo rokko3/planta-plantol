@@ -13,9 +13,11 @@ from typing import Any, Dict, List, Optional, Protocol, Tuple, runtime_checkable
 from Modelo.entidades import (
     DiagnosticoPlanta,
     Dispositivo,
+    EpisodioGamificacion,
     Lectura,
     Planta,
     RangosEspecie,
+    TransaccionPuntos,
     Usuario,
 )
 
@@ -34,7 +36,23 @@ class RegistrarLecturaPort(Protocol):
         luminosidad: float,
         humedad: float,
         temperatura: float,
+        humedad_suelo: Optional[float] = None,
     ) -> DiagnosticoPlanta:
+        ...
+
+
+@runtime_checkable
+class GamificacionPort(Protocol):
+    """Puerto de entrada para casos de uso de gamificación (puntos, saludos, recompensas)."""
+    def saludar_planta(self, usuario_id: int, planta_id: int) -> Dict[str, Any]:
+        ...
+
+    def consultar_saldo(self, usuario_id: int) -> int:
+        ...
+
+    def consultar_historial_puntos(
+        self, usuario_id: int, limite: int = 50
+    ) -> List[Dict[str, Any]]:
         ...
 
 
@@ -201,6 +219,12 @@ class RepositorioDispositivosPort(Protocol):
     def consumir_codigo_vinculacion(self, codigo: str) -> Optional[str]:
         ...
 
+    def guardar_token_pairing(self, token: str, usuario_id: int) -> None:
+        ...
+
+    def validar_y_consumir_token_pairing(self, token: str) -> bool:
+        ...
+
 
 @runtime_checkable
 class EmisorTokenPort(Protocol):
@@ -212,4 +236,38 @@ class EmisorTokenPort(Protocol):
         ...
 
     def verificar_token(self, token: str) -> Dict[str, Any]:
+        ...
+
+
+@runtime_checkable
+class RepositorioGamificacionPort(Protocol):
+    """Puerto de salida para persistencia de gamificación (puntos, transacciones, episodios)."""
+    def obtener_saldo(self, usuario_id: int) -> int:
+        ...
+
+    def registrar_transaccion(self, transaccion: TransaccionPuntos) -> TransaccionPuntos:
+        ...
+
+    def listar_transacciones(
+        self, usuario_id: int, limite: int = 50
+    ) -> List[TransaccionPuntos]:
+        ...
+
+    def registrar_saludo_hoy(self, usuario_id: int, planta_id: int, fecha_dia: str) -> bool:
+        ...
+
+    def ya_saludo_hoy(self, usuario_id: int, planta_id: int, fecha_dia: str) -> bool:
+        ...
+
+    def obtener_episodio_activo(
+        self, planta_id: int, tipo_episodio: str
+    ) -> Optional[EpisodioGamificacion]:
+        ...
+
+    def guardar_episodio(self, episodio: EpisodioGamificacion) -> EpisodioGamificacion:
+        ...
+
+    def cerrar_episodios_activos(
+        self, planta_id: int, excluir_tipo: Optional[str] = None
+    ) -> None:
         ...

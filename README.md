@@ -1,5 +1,41 @@
 # Plantol — Sistema de Monitoreo y Diagnóstico de Plantas
 
+> [!WARNING]
+> **Proyecto en desarrollo (aún sin completar):** Algunas integraciones físicas y de calibración están en fase de pruebas activas (por ejemplo, calibración fina del sensor de suelo y validación de hardware I2C compartido en protoboard).
+
+## Guía Rápida de Uso
+
+### 1. Ejecutar el Servidor (Backend + Web)
+```bash
+pip install -r requirements.txt
+python app.py
+```
+Abre en **Google Chrome** o **Microsoft Edge**: `http://127.0.0.1:5000` *(Web Bluetooth requiere `localhost` / `127.0.0.1` o `HTTPS`)*.
+
+### 2. Cargar el Firmware en ESP32-S3 (PlatformIO)
+El proyecto de hardware está en [`firmware/Planta_Inteligente/`](firmware/Planta_Inteligente/):
+- **Pines utilizados:**
+  - `GPIO 4`: DHT11 (Temperatura)
+  - `GPIO 5`: Sensor analógico de humedad de suelo
+  - `GPIO 8` (SDA) / `GPIO 9` (SCL): Bus I2C compartido entre **BH1750 / GY-302** (`0x23`/`0x5C`) y **Pantalla OLED SSD1306** (`0x3C`)
+  - `GPIO 2`: LED de estado · `GPIO 0` (`BOOT`): Reset de fábrica
+- **Compilar y subir:**
+  ```bash
+  pio run --target upload -d firmware/Planta_Inteligente
+  ```
+
+### 3. Conectar la Matera por Bluetooth (BLE)
+1. En la web, inicia sesión y ve a **Vincular ESP32** → **Escanear Dispositivos Bluetooth (BLE)**.
+2. Selecciona **`Planta-Sensor-Config`** (la OLED mostrará `MODO BLE` / `Listo p/ Web`).
+3. Ingresa el nombre y contraseña de tu red Wi-Fi (el computador y la ESP32 deben estar en la misma red) y pulsa **Enviar Credenciales por GATT**.
+4. Cuando la ESP32 aparezca en **Dispositivos ESP32 Disponibles en la Red**, elige tu planta y haz clic en **Vincular a Planta**. La OLED pasará a mostrar la **cara de gamificación**, barra de `HP` y lecturas en tiempo real.
+
+### 4. ¿Cómo resetear los valores / credenciales de la ESP32?
+- Mantén presionado el botón físico **`BOOT` (GPIO 0)** de la placa ESP32-S3 durante **5 segundos** hasta que la OLED muestre `FACTORY RESET`. Esto borra el Wi-Fi, el host y el token JWT guardados en flash y devuelve la placa a `MODO BLE`.
+- *(Si además deseas limpiar dispositivos en la web, usa el botón **Desvincular** en la tarjeta de la planta).*
+
+---
+
 Plantol es una aplicación integral diseñada para supervisar las condiciones ambientales de diversas especies vegetales, diagnosticar su estado de salud en tiempo real a partir de mediciones físicas (luminosidad, humedad del sustrato y temperatura) y recibir telemetría de dispositivos de hardware ESP32 o simuladores IoT.
 
 El sistema está estructurado bajo una **Arquitectura Hexagonal (Puertos y Adaptadores)** pura y organizada formalmente en las capas **Modelo**, **Vista** y **Controlador**, garantizando que el núcleo de dominio vegetal permanezca 100 % desacoplado de dependencias externas como Flask, SQLite, CSV, HTTP y tokens JWT.
@@ -225,9 +261,44 @@ El simulador emula el comportamiento de un sensor físico transmitiendo telemetr
 
 ---
 
-## 9. Pruebas Automatizadas
+## 7. Firmware Real ESP32 (`Planta_Inteligente`)
 
-El proyecto incluye 23 pruebas automatizadas organizadas en pruebas unitarias del modelo y pruebas de integración de la API.
+El microcontrolador ESP32-S3 corre el firmware compilado con PlatformIO ubicado en `Planta_Inteligente`:
+- **Sensores reales:** DHT11 en GPIO 4, Sensor de Humedad de Suelo analógico en GPIO 5 (ADC 12-bit calibrado porcentualmente 0-100%), BH1750 en I2C (SDA 8, SCL 9).
+- **Aprovisionamiento BLE/GATT:** Servicio `4fafc201-1fb5-459e-8fcc-c5c9c331914b`, Config Char `beb5483e-36e1-4688-b7f5-ea07361b26a8` y Status Char `beb5483e-36e1-4688-b7f5-ea07361b26a9`.
+- **IP Dinámica:** Soporta recepción del parámetro `host` vía BLE para ubicar el backend en redes dinámicas sin quemar IPs estáticas en código.
+- **Preparación Modular OLED:** Clase abstracta `include/PantallaOLED.h` con `#define USAR_OLED 0` (inactiva sin dependencias externas).
+- **Compilación en PlatformIO:**
+  ```powershell
+  pio run -d "..\Planta_Inteligente"
+  ```
+
+---
+
+## 8. Web Bluetooth y Conexión Automática
+
+El usuario conecta su matera directamente desde el panel web de Plantol:
+1. Inicia sesión en Plantol (`http://localhost:5000` o `http://127.0.0.1:5000` desde Chrome o Edge).
+2. Presiona el botón verde **"Conectar Matera"**.
+3. El navegador solicita permiso Bluetooth y escanea dispositivos BLE cercanos.
+4. El frontend autodetecta la dirección IP de la PC mediante `GET /api/servidor/info`, solicita al usuario su SSID/clave WiFi y envía la configuración completa junto con el token JWT del dispositivo por GATT.
+5. El ESP32 se conecta al WiFi, comienza a transmitir telemetría y el dashboard se actualiza en tiempo real.
+
+---
+
+## 9. Sistema de Gamificación
+
+- **Puntos por Saludo Diario (+1 pt):** Un saludo por planta por día calendario (reloj UTC del servidor, resistente a trampas).
+- **Puntos por Estabilidad Continua (+1 pt/hora):** 1 hora continua en estado saludable. Si la telemetría se desconecta por > 90 segundos, el contador se reinicia.
+- **Rescate de Humedad (+3 pts):** Bonificación por recuperar la planta tras un estado de sequía.
+- **Penalización por Descuido (-2 pts):** > 1 hora en estado crítico (saldo nunca negativo).
+- **Puntos de Salud (HP 0-100) y Emociones:** Evaluados biológicamente (`EN PELIGRO`, `SEDIENTA`, `ACALORADA`, `CON FRÍO`, `DURMIENDO`, `RADIANTE`).
+
+---
+
+## 10. Pruebas Automatizadas
+
+El proyecto incluye **42 pruebas automatizadas** que validan el dominio puro, la gamificación y los endpoints de la API.
 
 ### Comando de Ejecución
 Ejecuta la suite completa desde la raíz del proyecto:
@@ -235,19 +306,27 @@ Ejecuta la suite completa desde la raíz del proyecto:
 python -m unittest discover tests
 ```
 
-Para ver la ejecución detallada de cada prueba:
+Para ver la ejecución detallada:
 ```powershell
-python -m unittest -v tests/test_modelo.py tests/test_api.py
+python -m unittest -v tests/test_modelo.py tests/test_gamificacion.py tests/test_api.py
 ```
 
-### Cobertura de las Pruebas
-- **Pruebas unitarias (`tests/test_modelo.py` - 15 pruebas):**
-  - Validación de límites físicos de sensores (valores negativos, extremos imposibles).
-  - Algoritmo de clasificación de salud vegetal (`SALUDABLE`, `ADVERTENCIA`, `CRITICO`).
-  - Dobles de prueba (*stubs/mocks*) para puertos de salida, verificando el dominio sin conexión a disco ni base de datos.
-  - Regla de dominio de pertenencia y control de acceso entre usuarios.
-- **Pruebas de integración (`tests/test_api.py` - 8 pruebas):**
-  - Ciclo de vida completo de endpoints HTTP REST usando el cliente de pruebas de Flask.
+### Cobertura de las Pruebas (42 pruebas, 100% éxito)
+- **Pruebas unitarias de dominio (`tests/test_modelo.py`):**
+  - Validación de límites físicos de sensores.
+  - Algoritmo de clasificación ambiental y diagnóstico biológico.
+  - Reglas de pertenencia y control de acceso entre usuarios.
+- **Pruebas de gamificación y salud (`tests/test_gamificacion.py`):**
+  - Determinación determinista de HP (0-100) y jerarquía estricta de emociones.
+  - Validación física de humedad de suelo.
+  - Acreditación idempotente de saludos diarios (+1 pt) y control anti-exploit.
+  - Recompensas por cuidado continuo saludable (+1 pt/hora) y reseteo por desconexión (> 90s).
+  - Bonificación por rescate de humedad crítica (+3 pts).
+  - Penalización por descuido continuo (-2 pts con garantía de saldo $\ge 0$).
+- **Pruebas de integración (`tests/test_api.py`):**
+  - Autenticación JWT de usuarios y dispositivos con scopes separados.
+  - Recepción de telemetría con `humedad_suelo` y respuesta con HP y estado emocional.
+  - Endpoints de información del servidor (`/api/servidor/info`), saludos (`/api/plantas/<id>/saludar`) y saldos de puntos.
   - Emisión y validación de tokens JWT y rechazo de tokens expirados o adulterados.
   - Verificación de separación estricta de *scopes* (`usuario` vs `dispositivo`).
   - Rechazo de lecturas no autorizadas y respuestas HTTP 403 Forbidden ante intentos de acceso cruzado entre usuarios.
