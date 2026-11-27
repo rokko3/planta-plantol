@@ -31,10 +31,13 @@ from Modelo.entidades import (
     MOTIVO_SALUDO_DIARIO,
     OPTIMO,
     SALUDABLE,
+    SIN_RESPUESTA,
     TIPO_PENALIZACION,
     TIPO_RECOMPENSA,
     AccesoDenegadoPlantaError,
     DiagnosticoPlanta,
+    DispositivoNoAutorizadoError,
+    DispositivoNoEncontradoError,
     DispositivoNoVinculadoError,
     EpisodioGamificacion,
     EspecieNoSoportadaError,
@@ -84,6 +87,34 @@ PARAMETROS_EVALUABLES = [
         "Mueve la planta a un lugar más fresco o ventilado.",
     ),
 ]
+
+
+def es_dispositivo_en_linea(
+    ultimo_contacto: Optional[str],
+    estado_registrado: Optional[str],
+    ventana_seg: int = 120,
+) -> tuple[bool, str, Optional[int]]:
+    """
+    Determina en el dominio si un ESP32 está realmente en línea según su última comunicación real
+    y la ventana de inactividad configurada (120 s por defecto).
+    """
+    estado_norm = (estado_registrado or "").strip().upper()
+    if not ultimo_contacto:
+        return False, SIN_RESPUESTA, None
+    try:
+        dt_contacto = datetime.datetime.fromisoformat(str(ultimo_contacto).replace("Z", "+00:00"))
+    except ValueError:
+        return False, SIN_RESPUESTA, None
+
+    ahora = datetime.datetime.now(dt_contacto.tzinfo) if dt_contacto.tzinfo is not None else datetime.datetime.now()
+    delta_seg = (ahora - dt_contacto).total_seconds()
+    segundos = max(0, int(delta_seg))
+    en_linea = estado_norm == CONECTADO and (-5 <= delta_seg <= max(1, int(ventana_seg)))
+    return en_linea, (CONECTADO if en_linea else SIN_RESPUESTA), segundos
+
+
+def _clave_dispositivo_en_evento(dispositivo_id: Optional[str]) -> str:
+    return f"[DEV:{(dispositivo_id or 'SIN_DEV').strip().upper()}]"
 
 
 class ValidadorDeEstado:
@@ -251,6 +282,81 @@ class ValidadorDeEstado:
 
         return EMOCION_RADIANTE
 
+    def evaluar_iluminacion_contextual(
+        self,
+        especie: str,
+        rangos: RangosEspecie,
+        luminosidad: float,
+        historial_lux: Optional[List[float]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Evalúa la iluminación considerando necesidades de la especie y exposición histórica reciente.
+        Diferencia: CRITICA_INSUFICIENTE, BAJA_TOLERABLE, ADECUADA y EXCESIVA,
+        y evita falsos positivos ante picos momentáneos (p. ej. linterna) tras oscuridad crónica.
+        """
+        umbral_critico = min(rangos.lux_min, max(100.0, rangos.lux_min * 0.30))
+        muestra = [float(x) for x in (historial_lux or []) if isinstance(x, (int, float))][:10]
+        prom_reciente = round(sum(muestra) / len(muestra), 1) if muestra else round(float(luminosidad), 1)
+
+        es_pico_momentaneo = False
+        if luminosidad >= rangos.lux_min and len(muestra) >= 3:
+            criticas_previas = sum(1 for x in muestra if x < umbral_critico)
+            consecutivas_optimas_previas = 0
+            for x in muestra:
+                if x >= rangos.lux_min:
+                    consecutivas_optimas_previas += 1
+                else:
+                    break
+            if criticas_previas >= max(3, int(len(muestra) * 0.7)) and consecutivas_optimas_previas < 2:
+                es_pico_momentaneo = True
+
+        if es_pico_momentaneo:
+            nivel = "CRITICA_INSUFICIENTE"
+            clasificacion = BAJO
+            explicacion = (
+                f"Lectura puntual de {luminosidad:.0f} lux, pero {especie} acumula oscuridad sostenida "
+                f"(promedio reciente {prom_reciente:.0f} lux en {len(muestra)} lecturas; mínimo {rangos.lux_min:.0f} lux). "
+                "Requiere luz continua, no un destello momentáneo."
+            )
+        elif luminosidad < umbral_critico:
+            nivel = "CRITICA_INSUFICIENTE"
+            clasificacion = BAJO
+            explicacion = (
+                f"Iluminación crítica para {especie}: recibe {luminosidad:.0f} lux "
+                f"(muy por debajo del mínimo de {rangos.lux_min:.0f} lux). Acércala a una fuente de luz."
+            )
+        elif luminosidad < rangos.lux_min:
+            nivel = "BAJA_TOLERABLE"
+            clasificacion = BAJO
+            explicacion = (
+                f"Iluminación baja pero tolerable para {especie}: {luminosidad:.0f} lux "
+                f"(ideal {rangos.lux_min:.0f}–{rangos.lux_max:.0f} lux). Conviene mejorar su ubicación gradualmente."
+            )
+        elif luminosidad > rangos.lux_max:
+            nivel = "EXCESIVA"
+            clasificacion = ALTO
+            explicacion = (
+                f"Iluminación excesiva para {especie}: {luminosidad:.0f} lux supera el máximo "
+                f"recomendado ({rangos.lux_max:.0f} lux). Muévela a sombra parcial."
+            )
+        else:
+            nivel = "ADECUADA"
+            clasificacion = OPTIMO
+            explicacion = (
+                f"Iluminación adecuada para {especie}: {luminosidad:.0f} lux dentro del rango "
+                f"({rangos.lux_min:.0f}–{rangos.lux_max:.0f} lux)."
+            )
+
+        return {
+            "nivel": nivel,
+            "clasificacion": clasificacion,
+            "lux_actual": round(float(luminosidad), 1),
+            "lux_promedio_reciente": prom_reciente,
+            "lecturas_analizadas": len(muestra),
+            "es_pico_momentaneo": es_pico_momentaneo,
+            "explicacion": explicacion,
+        }
+
     def evaluar(
         self,
         especie: str,
@@ -260,6 +366,7 @@ class ValidadorDeEstado:
         temperatura: float,
         fecha_hora: Optional[str] = None,
         humedad_suelo: Optional[float] = None,
+        historial_lux: Optional[List[float]] = None,
     ) -> DiagnosticoPlanta:
         self.validar_lectura_fisica(luminosidad, humedad, temperatura, humedad_suelo)
         resultados = self.clasificar_todos(
@@ -269,9 +376,33 @@ class ValidadorDeEstado:
             temperatura=temperatura,
             humedad_suelo=humedad_suelo,
         )
+        resumen_lum = self.evaluar_iluminacion_contextual(
+            especie=especie,
+            rangos=rangos,
+            luminosidad=luminosidad,
+            historial_lux=historial_lux,
+        )
+
+        for idx, res in enumerate(resultados):
+            if res.nombre == "luminosidad":
+                reco = "" if resumen_lum["clasificacion"] == OPTIMO else resumen_lum["explicacion"]
+                resultados[idx] = ResultadoParametro(
+                    nombre="luminosidad",
+                    valor=res.valor,
+                    clasificacion=resumen_lum["clasificacion"],
+                    recomendacion=reco,
+                )
+                break
+
         estado_global = self.determinar_estado(resultados)
         hp = self.calcular_hp(estado_global, resultados)
-        emocion = self.determinar_emocion(estado_global, resultados, luminosidad)
+        if estado_global == EN_RIESGO and resumen_lum["nivel"] == "BAJA_TOLERABLE":
+            fuera = [r for r in resultados if r.clasificacion != OPTIMO]
+            if len(fuera) == 1 and fuera[0].nombre == "luminosidad":
+                hp = 75
+
+        luz_efectiva = luminosidad if not resumen_lum["es_pico_momentaneo"] else resumen_lum["lux_promedio_reciente"]
+        emocion = self.determinar_emocion(estado_global, resultados, luz_efectiva)
 
         return DiagnosticoPlanta(
             especie=especie,
@@ -280,6 +411,7 @@ class ValidadorDeEstado:
             fecha_hora=fecha_hora,
             hp=hp,
             estado_emocional=emocion,
+            resumen_luminico=resumen_lum,
         )
 
     @staticmethod
@@ -370,17 +502,26 @@ class CasoUsoRegistrarLectura:
 
                 # Si cumplió 1 hora continua (3600 segundos) de estabilidad
                 if (ahora_utc - inicio_t).total_seconds() >= 3600:
-                    tx = TransaccionPuntos(
-                        id=None,
-                        usuario_id=planta.usuario_id,
-                        planta_id=planta.id,
-                        cantidad=1,
-                        motivo=MOTIVO_CUIDADO_CONTINUO,
-                        evento=f"1 hora continua de estabilidad saludable en {planta.nombre}",
-                        fecha=ahora_iso,
-                        tipo=TIPO_RECOMPENSA,
+                    hoy_utc = ahora_utc.strftime("%Y-%m-%d")
+                    txs_recientes = self._gamificacion.listar_transacciones(planta.usuario_id, limite=100)
+                    cuidado_hoy = sum(
+                        1
+                        for t in txs_recientes
+                        if t.motivo == MOTIVO_CUIDADO_CONTINUO and str(t.fecha or "").startswith(hoy_utc)
                     )
-                    self._gamificacion.registrar_transaccion(tx)
+                    if planta.dispositivo_id and cuidado_hoy < 4:
+                        tx = TransaccionPuntos(
+                            id=None,
+                            usuario_id=planta.usuario_id,
+                            planta_id=planta.id,
+                            cantidad=1,
+                            motivo=MOTIVO_CUIDADO_CONTINUO,
+                            evento=f"1 hora continua de estabilidad saludable en {planta.nombre} {_clave_dispositivo_en_evento(planta.dispositivo_id)}",
+                            fecha=ahora_iso,
+                            tipo=TIPO_RECOMPENSA,
+                            clave_idempotencia=f"CUIDADO:{planta.usuario_id}:{hoy_utc}:{cuidado_hoy}",
+                        )
+                        self._gamificacion.registrar_transaccion(tx)
                     # Reiniciar marca de inicio para la siguiente hora
                     ep_saludable.inicio_utc = ahora_iso
 
@@ -392,7 +533,7 @@ class CasoUsoRegistrarLectura:
                 self._gamificacion.guardar_episodio(ep_saludable)
 
         # -------------------------------------------------------------
-        # 2. Bonificación por Rescate (+3 puntos al salir de humedad baja)
+        # 2. Bonificación por Rescate (+4 monedas, >=5 min en sequía, cooldown 6h, 1/planta/día, 2/usuario/día)
         # -------------------------------------------------------------
         hum_baja = False
         for param in diagnostico.parametros:
@@ -421,20 +562,51 @@ class CasoUsoRegistrarLectura:
         else:
             # Si antes estaba en humedad baja y ahora se recuperó
             if ep_humedad_baja and not ep_humedad_baja.recompensado_penalizado:
-                # Anti-jitter: confirmar que la sequía persistió al menos 30 segundos reales
+                # Anti-jitter y anti-farm: confirmar sequía sostenida >= 300s (5 minutos reales)
                 inicio_h = self._parsear_tiempo_utc(ep_humedad_baja.inicio_utc)
-                if (ahora_utc - inicio_h).total_seconds() >= 30:
-                    tx = TransaccionPuntos(
-                        id=None,
-                        usuario_id=planta.usuario_id,
-                        planta_id=planta.id,
-                        cantidad=3,
-                        motivo=MOTIVO_RESCATE_HUMEDAD,
-                        evento=f"Rescate exitoso de humedad en {planta.nombre}",
-                        fecha=ahora_iso,
-                        tipo=TIPO_RECOMPENSA,
+                if (ahora_utc - inicio_h).total_seconds() >= 300 and planta.dispositivo_id:
+                    hoy_utc = ahora_utc.strftime("%Y-%m-%d")
+                    tag_dev = _clave_dispositivo_en_evento(planta.dispositivo_id)
+                    txs_usuario = self._gamificacion.listar_transacciones(planta.usuario_id, limite=100)
+                    rescates_usuario_hoy = [
+                        t
+                        for t in txs_usuario
+                        if t.motivo == MOTIVO_RESCATE_HUMEDAD and str(t.fecha or "").startswith(hoy_utc)
+                    ]
+                    rescates_disp_hoy = [
+                        t for t in rescates_usuario_hoy
+                        if tag_dev in str(t.evento or "") or t.planta_id == planta.id
+                    ]
+                    ultimo_rescate_disp = next(
+                        (
+                            t for t in txs_usuario
+                            if t.motivo == MOTIVO_RESCATE_HUMEDAD and (tag_dev in str(t.evento or "") or t.planta_id == planta.id)
+                        ),
+                        None,
                     )
-                    self._gamificacion.registrar_transaccion(tx)
+                    en_cooldown = False
+                    if ultimo_rescate_disp and ultimo_rescate_disp.fecha:
+                        dt_ult = self._parsear_tiempo_utc(ultimo_rescate_disp.fecha)
+                        if (ahora_utc - dt_ult).total_seconds() < 6 * 3600:
+                            en_cooldown = True
+
+                    if (
+                        not en_cooldown
+                        and len(rescates_disp_hoy) < 1
+                        and len(rescates_usuario_hoy) < 2
+                    ):
+                        tx = TransaccionPuntos(
+                            id=None,
+                            usuario_id=planta.usuario_id,
+                            planta_id=planta.id,
+                            cantidad=4,
+                            motivo=MOTIVO_RESCATE_HUMEDAD,
+                            evento=f"Rescate exitoso de humedad en {planta.nombre} {tag_dev}",
+                            fecha=ahora_iso,
+                            tipo=TIPO_RECOMPENSA,
+                            clave_idempotencia=f"RESCATE:{planta.usuario_id}:{planta.dispositivo_id.strip().upper()}:{hoy_utc}",
+                        )
+                        self._gamificacion.registrar_transaccion(tx)
                 ep_humedad_baja.recompensado_penalizado = True
                 ep_humedad_baja.activo = False
                 self._gamificacion.guardar_episodio(ep_humedad_baja)
@@ -517,7 +689,19 @@ class CasoUsoRegistrarLectura:
         if not rangos:
             raise EspecieNoSoportadaError(planta.especie)
 
-        # 4. Ejecuta el núcleo de dominio para calcular el diagnóstico y gamificación
+        # 4. Consultar historial reciente de iluminación para evitar falsos positivos por picos momentáneos
+        historial_lux: List[float] = []
+        try:
+            hist_reciente = self._historial.obtener_historial_por_planta(planta.id, limite=10)
+            for item in hist_reciente:
+                if isinstance(item, dict) and item.get("luminosidad") is not None:
+                    historial_lux.append(float(item["luminosidad"]))
+                elif hasattr(item, "luminosidad") and item.luminosidad is not None:
+                    historial_lux.append(float(item.luminosidad))
+        except Exception:
+            historial_lux = []
+
+        # 5. Ejecuta el núcleo de dominio para calcular el diagnóstico y gamificación
         diagnostico = self._validador.evaluar(
             especie=planta.especie,
             rangos=rangos,
@@ -526,6 +710,7 @@ class CasoUsoRegistrarLectura:
             temperatura=temperatura,
             fecha_hora=timestamp,
             humedad_suelo=humedad_suelo,
+            historial_lux=historial_lux,
         )
 
         # 5. Persiste la lectura y su diagnóstico en el puerto de historial
@@ -585,11 +770,15 @@ class CasoUsoConsultarEstado:
         if planta.dispositivo_id:
             dev = self._dispositivos.buscar_por_id(planta.dispositivo_id)
             if dev:
+                ref_contacto = dev.ultimo_contacto or (ultima_lectura.timestamp if ultima_lectura else None)
+                en_linea, estado_efectivo, segs = es_dispositivo_en_linea(ref_contacto, dev.estado_conexion)
                 dispositivo_info = {
                     "id": dev.id,
                     "mac": dev.mac,
-                    "ultimo_contacto": dev.ultimo_contacto,
-                    "estado_conexion": dev.estado_conexion,
+                    "ultimo_contacto": ref_contacto,
+                    "estado_conexion": estado_efectivo,
+                    "en_linea": en_linea,
+                    "segundos_sin_contacto": segs,
                 }
 
         # Extraer diagnóstico reciente o valores por defecto
@@ -647,10 +836,14 @@ class CasoUsoConsultarEstado:
             if p.dispositivo_id:
                 dev = self._dispositivos.buscar_por_id(p.dispositivo_id)
                 if dev:
+                    ref_contacto = dev.ultimo_contacto or (ultima.timestamp if ultima else None)
+                    en_linea, estado_efectivo, segs = es_dispositivo_en_linea(ref_contacto, dev.estado_conexion)
                     dev_info = {
                         "id": dev.id,
-                        "ultimo_contacto": dev.ultimo_contacto,
-                        "estado_conexion": dev.estado_conexion,
+                        "ultimo_contacto": ref_contacto,
+                        "estado_conexion": estado_efectivo,
+                        "en_linea": en_linea,
+                        "segundos_sin_contacto": segs,
                     }
 
             ya_saludado = False
@@ -751,26 +944,14 @@ class CasoUsoGamificacion:
         if self._gamificacion.ya_saludo_hoy(usuario_id, planta_id, hoy_utc):
             raise SaludoYaRealizadoHoyError(usuario_id, planta_id, hoy_utc)
 
-        # Registrar saludo diario
+        # Registrar saludo diario (interacción visual/social, sin recompensas económicas ni XP)
         self._gamificacion.registrar_saludo_hoy(usuario_id, planta_id, hoy_utc)
-
-        ahora_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        tx = TransaccionPuntos(
-            id=None,
-            usuario_id=usuario_id,
-            planta_id=planta_id,
-            cantidad=1,
-            motivo=MOTIVO_SALUDO_DIARIO,
-            evento=f"Saludo diario matutino a {planta.nombre}",
-            fecha=ahora_iso,
-            tipo=TIPO_RECOMPENSA,
-        )
-        self._gamificacion.registrar_transaccion(tx)
         nuevo_saldo = self._gamificacion.obtener_saldo(usuario_id)
 
         return {
-            "mensaje": f"¡Has saludado a {planta.nombre}! La planta se siente querida (+1 punto).",
-            "puntos_ganados": 1,
+            "mensaje": f"¡Has saludado a {planta.nombre}! La planta se siente acompañada.",
+            "puntos_ganados": 0,
+            "xp_ganado": 0,
             "saldo_actual": nuevo_saldo,
             "planta_id": planta_id,
             "fecha": hoy_utc,
@@ -813,12 +994,24 @@ class CasoUsoGestionPlantas:
         if not rangos:
             raise EspecieNoSoportadaError(especie)
 
+        dev_id_limpio = dispositivo_id.strip().upper() if dispositivo_id else None
+        if dev_id_limpio:
+            dev = self._dispositivos.buscar_por_id(dev_id_limpio)
+            if not dev:
+                raise DispositivoNoEncontradoError(dev_id_limpio)
+            if dev.usuario_id is None or int(dev.usuario_id) != int(usuario_id):
+                raise DispositivoNoAutorizadoError(dev_id_limpio)
+            if dev.planta_id is not None and dev.planta_id != 0:
+                raise ValueError(
+                    f"El dispositivo {dev_id_limpio} ya está vinculado a otra planta (ID {dev.planta_id})."
+                )
+
         planta = Planta(
             id=0,
             nombre=nombre.strip(),
             especie=especie.strip(),
             usuario_id=usuario_id,
-            dispositivo_id=dispositivo_id.strip() if dispositivo_id else None,
+            dispositivo_id=dev_id_limpio,
             ubicacion=ubicacion.strip(),
             fecha_creacion=datetime.datetime.now().isoformat(),
         )
@@ -843,6 +1036,27 @@ class CasoUsoGestionPlantas:
             dev_id_autorizado = self._dispositivos.consumir_codigo_vinculacion(codigo_vinculacion)
             if not dev_id_autorizado or dev_id_autorizado.upper() != dispositivo_id.upper():
                 return False
+
+        dev = self._dispositivos.buscar_por_id(dispositivo_id)
+        if not dev:
+            raise DispositivoNoEncontradoError(dispositivo_id)
+
+        # Seguridad: solo el propietario verificado del dispositivo puede vincularlo
+        if dev.usuario_id is None or int(dev.usuario_id) != int(usuario_id):
+            raise DispositivoNoAutorizadoError(dispositivo_id)
+
+        # Garantizar relación 1:1 (no permitir vincular un ESP32 ya enlazado a otra planta)
+        if dev.planta_id is not None and dev.planta_id != 0 and int(dev.planta_id) != int(planta_id):
+            raise ValueError(
+                f"El dispositivo {dispositivo_id} ya está vinculado a otra planta (ID {dev.planta_id}). Desvincúlalo primero."
+            )
+
+        # Si la planta tenía otro dispositivo distinto vinculado, liberarlo primero sin borrar su configuración
+        if planta.dispositivo_id and planta.dispositivo_id.upper() != dispositivo_id.upper():
+            dev_anterior = self._dispositivos.buscar_por_id(planta.dispositivo_id)
+            if dev_anterior:
+                dev_anterior.planta_id = None
+                self._dispositivos.guardar_dispositivo(dev_anterior)
 
         # Vinculación directa autorizada para el propietario
         self._plantas.vincular_dispositivo(planta_id, dispositivo_id)

@@ -1,345 +1,152 @@
-# Plantol — Sistema de Monitoreo y Diagnóstico de Plantas
+# Plantol — Sistema Inteligente de Monitoreo y Cuidado de Plantas IoT
 
-> [!WARNING]
-> **Proyecto en desarrollo (aún sin completar):** Algunas integraciones físicas y de calibración están en fase de pruebas activas (por ejemplo, calibración fina del sensor de suelo y validación de hardware I2C compartido en protoboard).
-
-## Guía Rápida de Uso
-
-### 1. Ejecutar el Servidor (Backend + Web)
-```bash
-pip install -r requirements.txt
-python app.py
-```
-Abre en **Google Chrome** o **Microsoft Edge**: `http://127.0.0.1:5000` *(Web Bluetooth requiere `localhost` / `127.0.0.1` o `HTTPS`)*.
-
-### 2. Cargar el Firmware en ESP32-S3 (PlatformIO)
-El proyecto de hardware está en [`firmware/Planta_Inteligente/`](firmware/Planta_Inteligente/):
-- **Pines utilizados:**
-  - `GPIO 4`: DHT11 (Temperatura)
-  - `GPIO 5`: Sensor analógico de humedad de suelo
-  - `GPIO 8` (SDA) / `GPIO 9` (SCL): Bus I2C compartido entre **BH1750 / GY-302** (`0x23`/`0x5C`) y **Pantalla OLED SSD1306** (`0x3C`)
-  - `GPIO 2`: LED de estado · `GPIO 0` (`BOOT`): Reset de fábrica
-- **Compilar y subir:**
-  ```bash
-  pio run --target upload -d firmware/Planta_Inteligente
-  ```
-
-### 3. Conectar la Matera por Bluetooth (BLE)
-1. En la web, inicia sesión y ve a **Vincular ESP32** → **Escanear Dispositivos Bluetooth (BLE)**.
-2. Selecciona **`Planta-Sensor-Config`** (la OLED mostrará `MODO BLE` / `Listo p/ Web`).
-3. Ingresa el nombre y contraseña de tu red Wi-Fi (el computador y la ESP32 deben estar en la misma red) y pulsa **Enviar Credenciales por GATT**.
-4. Cuando la ESP32 aparezca en **Dispositivos ESP32 Disponibles en la Red**, elige tu planta y haz clic en **Vincular a Planta**. La OLED pasará a mostrar la **cara de gamificación**, barra de `HP` y lecturas en tiempo real.
-
-### 4. ¿Cómo resetear los valores / credenciales de la ESP32?
-- Mantén presionado el botón físico **`BOOT` (GPIO 0)** de la placa ESP32-S3 durante **5 segundos** hasta que la OLED muestre `FACTORY RESET`. Esto borra el Wi-Fi, el host y el token JWT guardados en flash y devuelve la placa a `MODO BLE`.
-- *(Si además deseas limpiar dispositivos en la web, usa el botón **Desvincular** en la tarjeta de la planta).*
+**Plantol** es una aplicación web y plataforma IoT diseñada para monitorear en tiempo real las condiciones ambientales de plantas mediante dispositivos **ESP32-S3**, diagnosticar su estado de salud según rangos agronómicos por especie, traducir mediciones técnicas en recomendaciones claras y motivar el cuidado continuo mediante un sistema completo de **gamificación** (monedas, experiencia, niveles, misiones, logros, tienda, inventario y habitación virtual).
 
 ---
 
-Plantol es una aplicación integral diseñada para supervisar las condiciones ambientales de diversas especies vegetales, diagnosticar su estado de salud en tiempo real a partir de mediciones físicas (luminosidad, humedad del sustrato y temperatura) y recibir telemetría de dispositivos de hardware ESP32 o simuladores IoT.
-
-El sistema está estructurado bajo una **Arquitectura Hexagonal (Puertos y Adaptadores)** pura y organizada formalmente en las capas **Modelo**, **Vista** y **Controlador**, garantizando que el núcleo de dominio vegetal permanezca 100 % desacoplado de dependencias externas como Flask, SQLite, CSV, HTTP y tokens JWT.
-
----
-
-## 1. Funcionalidades Principales
-
-El proyecto integra de manera nativa los siguientes servicios y capacidades:
-
-- **Gestión y eliminación completa de plantas:** Registro, monitoreo continuo de condiciones ambientales, desvinculación de sensores y eliminación definitiva en base de datos (con purga de historial y liberación inmediata del microcontrolador ESP32 a la red local).
-- **Recepción de lecturas de sensores:** Endpoint HTTP seguro para registrar telemetría enviada periódicamente por microcontroladores ESP32 con estampa de tiempo precisa.
-- **Simulación de ESP32:** Simulador autónomo de hardware IoT por línea de comandos que envía telemetría cruda a un puerto, sin reglas de negocio (la evaluación de salud vegetal reside 100 % en el Modelo).
-- **Consulta de historial:** Registro persistente de lecturas en SQLite con visualización temporal de mediciones y estados históricos por planta.
-- **Autenticación y autorización (JWT):** Control de acceso robusto mediante tokens criptográficos con alcances (*scopes*) estrictamente delimitados para usuarios (`scope: "usuario"`) y dispositivos (`scope: "dispositivo"`).
-- **Aprovisionamiento Bluetooth BLE/GATT y vinculación en red:** El usuario escanea dispositivos ESP32 a su alrededor, envía las credenciales de la red mediante una característica GATT y, una vez el ESP32 está conectado a la red local, lo asocia a su planta directamente sin requerir ingresar tokens ni códigos manuales.
-- **Fuentes de referencia intercambiables:** Posibilidad de alternar el origen de los rangos óptimos de las especies entre un archivo CSV y una base de datos relacional SQLite mediante una simple variable de configuración, sin tocar el código de negocio.
-- **Actualización automática de la interfaz:** Panel web interactivo con actualización asíncrona periódica (cada 3.5 segundos) que refleja cambios en vivo sin recargar la página.
+## 1. Problema que resuelve y objetivo
+- **Problema:** Muchas personas no cuentan con conocimientos técnicos para interpretar variables como luminosidad (`lux`), temperatura (`°C`) o humedad del sustrato (`%`), ni para configurar manualmente microcontroladores IoT.
+- **Objetivo:** Ofrecer una experiencia intuitiva y amigable donde cualquier usuario pueda conectar su matera por Bluetooth, ver explicaciones claras del estado de sus plantas y mantener hábitos positivos de cuidado mediante gamificación persistente en servidor, conservando una arquitectura **MVC + Arquitectura Hexagonal + SOLID** defendible académicamente.
 
 ---
 
-## 2. Estructura del Proyecto
+## 2. Características principales
+- **Monitoreo y diagnóstico vegetal:** Evaluación automática de luz, temperatura y humedad del suelo frente a tablas de referencia intercambiables (**CSV** o **SQLite**), con cálculo de salud (`HP` 0–100) y 6 estados emocionales (`RADIANTE`, `SEDIENTA`, `ACALORADA`, `CON FRÍO`, `DURMIENDO`, `EN PELIGRO`).
+- **Aprovisionamiento Bluetooth BLE/GATT y Wi-Fi:** Emparejamiento desde Google Chrome / Microsoft Edge mediante Web Bluetooth sin editar código en la ESP32.
+- **Autenticación y aislamiento por usuario (JWT):** Tokens separados por alcance (`scope: "usuario"` y `scope: "dispositivo"`), protección XSS en interfaz y validaciones estrictas en backend.
+- **Gamificación completa en backend:**
+  - Monedas de cuidado (`+1` saludo diario, `+2` cuidado continuo 60 min, `+3` rescate de humedad, `-2` descuido crítico prolongado, saldo nunca negativo).
+  - Progresión independiente por **XP y Niveles** con bonificación por subida de nivel.
+  - **Misiones diarias y progresivas** verificables por eventos reales.
+  - **Logros permanentes** con fecha de desbloqueo.
+  - **Tienda virtual** con **compras atómicas** e **inventario persistente**.
+  - **Habitación virtual personalizable** que integra las plantas reales del usuario y su estado emocional en vivo.
+- **Diseño responsive:** Pensado para escritorio (`1920×1080`, `1366×768`) y adaptado para tableta (`768 px`) y celulares (`430 px`, `390 px`, `360 px`).
 
-El proyecto organiza sus responsabilidades de forma modular, manteniendo una separación estricta entre dominio, adaptadores e interfaz:
+---
 
-```
+## 3. Tecnologías utilizadas
+- **Backend:** Python 3.11+, Flask, Flask-CORS, PyJWT, SQLite (`sqlite3`).
+- **Frontend:** HTML5, CSS3, JavaScript (ES6+ Vanilla, Fetch API, Web Bluetooth API).
+- **Hardware / Firmware:** ESP32-S3 (PlatformIO, Arduino-ESP32, NimBLE, HTTPClient, ArduinoJson).
+- **Pruebas:** `unittest` (47 pruebas unitarias, de integración y seguridad).
+
+---
+
+## 4. Estructura del repositorio
+
+```text
 planta-plantol/
-├── Controlador/                    # Adaptadores de entrada, salida y Composition Root
-│   ├── api.py                      # Adaptador de entrada: Endpoints REST Flask y decoradores JWT
-│   ├── app.py                      # Composition Root: Fábrica Flask e inyección de dependencias
-│   └── persistencia.py             # Adaptadores de salida: SQLite, CSV y servicio PyJWT
-├── Modelo/                         # Núcleo de Dominio puro (independiente de tecnología)
-│   ├── entidades.py                # Clases de dominio, tipos de datos, excepciones y constantes
-│   ├── negocio.py                  # Reglas de negocio, evaluación de salud y casos de uso
-│   └── puertos.py                  # Interfaces abstractas (Puertos de entrada y salida)
-├── Vista/                          # Frontend web asíncrono
-│   ├── app.js                      # Lógica JavaScript asíncrona, polling y consumo de API
-│   ├── index.html                  # Interfaz semántica estructurada y accesible
-│   └── styles.css                  # Sistema de diseño botánico profesional y responsivo
-├── data/                           # Directorio gestionado para persistencia relacional
-│   └── matera.db                   # Base de datos SQLite (creada y migrada automáticamente)
-├── tests/                          # Suite completa de pruebas automatizadas
-│   ├── test_api.py                 # Pruebas de integración de la API HTTP y seguridad
-│   └── test_modelo.py              # Pruebas unitarias puras del dominio con dobles de prueba
-├── DOCUMENTO_ARQUITECTURA.md       # Especificación arquitectónica técnica y justificación SOLID
-├── README.md                       # Documentación principal de instalación y uso
-├── app.py                          # Punto de entrada directo en la raíz para iniciar el servidor
-├── especies.csv                    # Tabla de referencia ambiental en formato CSV
-├── requirements.txt                # Dependencias externas de Python
-└── simulador_esp32.py              # Script independiente para emular hardware ESP32
+├── app.py                              # Punto de entrada del servidor Flask
+├── especies.csv                        # Tabla de referencia agronómica (modo CSV)
+├── requirements.txt                    # Dependencias de Python
+├── simulador_esp32.py                  # Simulador CLI de telemetría ESP32
+├── README.md                           # Guía de instalación, configuración y uso
+├── DOCUMENTO_ARQUITECTURA.md           # Arquitectura real, flujos y diagramas
+├── Modelo/                             # Núcleo de dominio puro (sin Flask ni SQLite)
+│   ├── entidades.py                    # Entidades, constantes y excepciones de dominio
+│   ├── puertos.py                      # Contratos abstractos (Protocol)
+│   ├── negocio.py                      # Diagnóstico, cuidado, episodios y casos de uso base
+│   └── gamificacion_avanzada.py        # XP, niveles, catálogo, misiones, logros y habitación
+├── Controlador/                        # Adaptadores de entrada/salida y Composition Root
+│   ├── app.py                          # Fábrica Flask e inyección de dependencias
+│   ├── api.py                          # Blueprint REST (/api/*) y decoradores JWT
+│   ├── persistencia.py                 # Adaptadores SQLite, CSV y ServicioJWT
+│   └── persistencia_gamificacion.py    # Adaptador SQLite atómico de gamificación avanzada
+├── Vista/                              # Interfaz web estática
+│   ├── index.html                      # Estructura SPA por secciones y modales
+│   ├── styles.css                      # Diseño botánico + reglas responsive
+│   ├── app.js                          # Dashboard, auth, errores amigables, historial y BLE
+│   └── gamificacion.js                 # Progresión, misiones, logros, tienda y habitación
+├── firmware/Planta_Inteligente/        # Proyecto PlatformIO del ESP32-S3
+├── data/                               # Base de datos SQLite (matera.db)
+└── tests/                              # Suite de pruebas automatizadas
+    ├── test_api.py
+    ├── test_gamificacion.py
+    └── test_modelo.py
 ```
 
-### Guía de Orientación para el Desarrollador
+---
 
-Si deseas inspeccionar o modificar un componente específico del sistema, consulta los siguientes archivos:
+## 5. Requisitos previos e instalación
 
-- **Una regla de negocio o cálculo de salud vegetal:** Dirígete a `Modelo/negocio.py` (`ValidadorDeEstado` y casos de uso del dominio).
-- **Un endpoint HTTP o validación de solicitudes:** Consulta `Controlador/api.py` (rutas Flask y decoradores de autenticación).
-- **Una consulta SQL, tabla relacional o lectura de archivos:** Revisa `Controlador/persistencia.py` (adaptadores `RepositorioSQLite`, `HistorialLecturasBD`, `TablaReferenciaCSV`).
-- **Un elemento visual, formulario o estructura HTML:** Modifica `Vista/index.html` y sus estilos correspondientes en `Vista/styles.css`.
-- **El comportamiento de la interfaz o sincronización en vivo:** Revisa `Vista/app.js` (`sincronizarDashboard`, `iniciarPollingAsincrono`, `apiFetch`).
-- **El simulador de hardware IoT:** Edita `simulador_esp32.py` (perfiles de planta, generación de valores y envío HTTP).
+### Requisitos
+- Python 3.10 o superior (`pip`).
+- Navegador **Google Chrome** o **Microsoft Edge** en escritorio (requerido para Web Bluetooth API).
+- *(Opcional para hardware)* VS Code + PlatformIO y placa ESP32-S3.
+
+### Instalación
+```bash
+git clone https://github.com/rokko3/planta-plantol.git
+cd planta-plantol
+pip install -r requirements.txt
+```
 
 ---
 
-## 3. Justificación de la Arquitectura Hexagonal
+## 6. Variables de entorno y configuración
 
-La Arquitectura Hexagonal (también conocida como patrón de *Puertos y Adaptadores*, propuesta por Alistair Cockburn) aísla el valor comercial del software frente a las tecnologías y herramientas externas que cambian con frecuencia.
+| Variable | Valores posibles | Por defecto | Descripción |
+| :--- | :--- | :--- | :--- |
+| `JWT_SECRET_KEY` | Cadena secreta (>= 32 chars) | Clave de desarrollo | Clave de firma JWT. **Definir obligatoriamente en despliegue.** |
+| `TABLA_REFERENCIA` | `csv` \| `bd` | `csv` | Origen de rangos óptimos por especie. |
+| `DB_PATH` | Ruta a archivo `.db` | `data/matera.db` | Ruta personalizada para la base SQLite. |
+| `CSV_PATH` | Ruta a archivo `.csv` | `especies.csv` | Ruta personalizada del catálogo de especies CSV. |
+| `PLANTOL_DEMO` | `0` \| `1` | `0` | Habilita datos iniciales y botón opcional **Entrar en Modo Demo** (`POST /api/auth/demo`). |
+| `SERVER_HOST` | IP LAN del servidor | Detección automática | IP sugerida al ESP32 durante aprovisionamiento BLE. |
+| `PORT` | Número de puerto | `5000` | Puerto reportado en `/api/servidor/info`. |
 
-En Plantol, el código refleja directamente estos conceptos:
-
-| Concepto Arquitectónico | Aplicación Concreta en Plantol | Ubicación en el Código |
-| :--- | :--- | :--- |
-| **Dominio Puro** | Entidades (`Planta`, `Lectura`, `Diagnostico`), reglas de salud y casos de uso. No importa Flask, SQLite ni PyJWT. | `Modelo/entidades.py`<br>`Modelo/negocio.py` |
-| **Puertos de Entrada** | Contratos que especifican qué casos de uso ofrece el sistema (`RegistrarLecturaPort`, `ConsultarEstadoPort`). | `Modelo/puertos.py` |
-| **Puertos de Salida** | Contratos abstractos de infraestructura requeridos por el dominio (`TablaReferenciaPort`, `HistorialLecturasPort`, `RepositorioPlantasPort`, `EmisorTokenPort`). | `Modelo/puertos.py` |
-| **Adaptadores de Entrada** | Reciben peticiones HTTP desde el navegador o el ESP32, validan tipos y tokens, y delegan la ejecución a los puertos de entrada. | `Controlador/api.py` |
-| **Adaptadores de Salida** | Implementaciones técnicas concretas para interactuar con SQLite (`RepositorioSQLite`), CSV (`TablaReferenciaCSV`) y firmas criptográficas (`ServicioJWT`). | `Controlador/persistencia.py` |
-| **Inyección de Dependencias** | Ensamblador o *Composition Root* que instancia los adaptadores y los inyecta en los casos de uso según la configuración. | `Controlador/app.py` |
-| **Capa de Presentación** | Interfaz de usuario desacoplada que consume la API REST de manera asíncrona mediante JSON. | `Vista/index.html`<br>`Vista/app.js` |
-
-### Independencia del Dominio con Respecto a la Infraestructura
-
-El núcleo del modelo nunca interactúa directamente con bases de datos ni protocolos de transporte:
-1. `ValidadorDeEstado` recibe valores numéricos flotantes puros y un objeto de rangos de especie; no sabe si los datos provienen de un sensor físico, un simulador o un formulario web.
-2. La regla fundamental de seguridad **"un usuario solo puede acceder a sus propias plantas"** se evalúa dentro de la entidad `Planta` y el caso de uso `verificar_propiedad_planta(planta, usuario_id)`. El dominio recibe únicamente identificadores enteros limpios, abstrayendo si la identidad se verificó mediante JWT, sesiones de cookies o certificados.
-3. El puerto `TablaReferenciaPort` permite que el caso de uso invoque `obtener_rangos(especie)` de forma polimórfica: la aplicación puede leer desde `especies.csv` o desde la tabla SQLite sin alterar una sola línea de lógica interna.
+### Configuración de JWT y Modo Demo
+- Por defecto, `PLANTOL_DEMO` está desactivado (`0`): la aplicación abre en **Cuenta y Acceso** sin iniciar sesión automáticamente ni exponer credenciales en el frontend.
+- Para demostraciones académicas con datos precargados, inicia el servidor con:
+  - **PowerShell (Windows):** `$env:PLANTOL_DEMO="1"; python app.py`
+  - **Linux/macOS:** `PLANTOL_DEMO=1 python app.py`
 
 ---
 
-## 4. Trazabilidad de Requisitos Obligatorios
+## 7. Ejecución y acceso a la aplicación
 
-| Requisito | Descripción del Requisito | Cómo se Cumple en Plantol | Ubicación y Archivos |
-| :---: | :--- | :--- | :--- |
-| **R1** | Diagnóstico ambiental y gestión del ciclo de vida | El modelo evalúa automáticamente luminosidad, humedad y temperatura según los rangos de la especie, permitiendo crear, consultar, desvincular sensores y eliminar plantas permanentemente de la base de datos (liberando el ESP32 en red). | Endpoints `POST /api/plantas`, `DELETE /api/plantas/<id>`<br>`Modelo/negocio.py`<br>`Vista/app.js` |
-| **R2** | Recepción de telemetría ESP32 | Endpoint protegido por token de dispositivo que procesa mediciones, valida rangos físicos, asocia la planta vinculada, diagnostica y guarda fecha/hora en BD. | Endpoint `POST /api/dispositivos/<id>/lecturas`<br>`Controlador/api.py`<br>`Modelo/negocio.py` |
-| **R3** | Simulador ESP32 autónomo | Script CLI configurable (`--intervalo`, `--dispositivo`, `--modo`) capaz de simular telemetría normal, fuera de rango o corrupta para probar resiliencia. | `simulador_esp32.py` |
-| **R4** | Fuentes de referencia intercambiables | Selección entre `TablaReferenciaCSV` (`especies.csv`) y `TablaReferenciaBD` (SQLite) mediante variable de entorno sin alterar el dominio. | Variable `TABLA_REFERENCIA`<br>`Controlador/app.py`<br>`Controlador/persistencia.py` |
-| **R5** | Historial de lecturas persistente | Almacenamiento cronológico de lecturas en SQLite con capacidad de consulta de la última lectura y del historial completo por planta. | Endpoint `GET /api/plantas/<id>/historial`<br>`Controlador/persistencia.py` (`HistorialLecturasBD`) |
-| **R6** | Actualización asíncrona de la vista | El frontend realiza polling periódico asíncrono (cada 3.5s) consultando `/api/dashboard` y actualizando tarjetas y métricas sin recargar el navegador. | `Vista/app.js` (`iniciarPollingAsincrono`)<br>`Vista/index.html` |
-| **R7** | Autenticación y autorización por JWT | Tokens con *scopes* separados (`usuario` vs `dispositivo`). Protección contra suplantación de identidad y aislamiento estricto de plantas por propietario. | `Controlador/api.py` (decoradores)<br>`Modelo/negocio.py` (`AccesoDenegadoPlantaError`) |
-
----
-
-## 5. Persistencia y Base de Datos
-
-### Ubicación y Gestión del Archivo de Base de Datos
-- **Ruta unificada:** La base de datos SQLite se almacena en `data/matera.db`.
-- **Resolución robusta de rutas:** La ruta se calcula en `Controlador/app.py` utilizando la ubicación absoluta del directorio del proyecto (`os.path.dirname(os.path.dirname(os.path.abspath(__file__)))`), evitando que la base de datos se cree en carpetas erróneas según el directorio de trabajo desde el que se lance el comando.
-- **Creación y migración automática:** Al arrancar el servidor, si el directorio `data/` no existe, se crea automáticamente (`os.makedirs`). Si existía un archivo `matera.db` previo en la raíz del proyecto, el sistema lo traslada de forma segura al directorio `data/` sin pérdida de datos.
-
-### Esquema y Almacenamiento
-La base de datos contiene las siguientes tablas relacionales:
-1. `usuarios`: Cuentas de usuario registradas con contraseñas cifradas con hash SHA-256 y sal criptográfica.
-2. `plantas`: Plantas registradas con su especie, ubicación y relación con el usuario propietario.
-3. `dispositivos`: Registro de dispositivos ESP32, estado de vinculación y asociación a plantas.
-4. `codigos_vinculacion`: Códigos de vinculación temporales de un solo uso para asociar hardware y plantas.
-5. `historial_lecturas`: Registro histórico continuo de cada lectura ambiental recibida con su marca temporal.
-6. `especies_referencia`: Tabla relacional con los rangos óptimos de luminosidad, humedad y temperatura para cada especie (utilizada cuando `TABLA_REFERENCIA=bd`).
-
-### Diferencia entre Historial de Lecturas y Tabla de Referencia
-- **Historial de lecturas (`historial_lecturas`):** Almacena datos dinámicos generados en el tiempo por los sensores ESP32 (telemetría mutable y acumulativa).
-- **Tabla de referencia de especies (`especies.csv` o `especies_referencia`):** Contiene parámetros agronómicos estáticos de calibración (rangos mínimos y máximos para cada variable ambiental).
-
----
-
-## 6. Instalación y Ejecución en Windows
-
-### Requisitos Previos
-- Python 3.10 o superior instalado en el sistema.
-- Terminal de PowerShell o Símbolo del sistema (CMD).
-
-### Paso a Paso para la Instalación
-
-1. **Abrir la terminal e ingresar a la carpeta del proyecto:**
-   ```powershell
-   cd c:\Users\moral\.gemini\antigravity-ide\scratch\planta-plantol
-   ```
-
-2. **Crear y activar un entorno virtual:**
-   ```powershell
-   python -m venv .venv
-   .\.venv\Scripts\Activate.ps1
-   ```
-   *(Si utilizas CMD, activa con: `.\.venv\Scripts\activate.bat`)*
-
-3. **Instalar dependencias requeridas:**
-   ```powershell
-   python -m pip install --upgrade pip
-   python -m pip install -r requirements.txt
-   ```
-
-4. **Ejecutar la aplicación web:**
-   Puedes iniciar el servidor desde la raíz utilizando cualquiera de estos dos comandos equivalentes:
-   ```powershell
+1. **Iniciar el servidor Flask:**
+   ```bash
    python app.py
    ```
-   o directamente desde el módulo controlador:
-   ```powershell
-   python Controlador/app.py
-   ```
-
-5. **Acceder a la interfaz:**
-   Abre tu navegador web e ingresa a:
-   ```
-   http://127.0.0.1:5000
-   ```
+2. **Abrir la web:**
+   Ingresa a `http://127.0.0.1:5000` en **Google Chrome** o **Microsoft Edge** *(Web Bluetooth requiere `localhost`, `127.0.0.1` o `HTTPS`)*.
+3. **Uso general:**
+   - **Cuenta y Acceso:** Registra un usuario nuevo o inicia sesión (o usa **Entrar en Modo Demo** si `PLANTOL_DEMO=1`).
+   - **Agregar Planta:** Registra el nombre, especie y ubicación de tu planta.
+   - **Mis Plantas:** Observa el estado de salud (`HP`), emoción, guía de cuidado en lenguaje sencillo, lecturas e **Historial**.
+   - **Tienda y Logros:** Consulta tu nivel/XP, misiones activas, logros desbloqueados y compra macetas o decoraciones.
+   - **Habitación:** Personaliza tu espacio colocando objetos de tu inventario junto a tus plantas reales.
 
 ---
 
-## 7. Configuración de la Fuente de Referencia (CSV / SQLite)
+## 8. Conexión ESP32 y Simulador
 
-La aplicación permite seleccionar el origen de datos de referencia mediante la variable de entorno `TABLA_REFERENCIA`:
+### Con hardware real (ESP32-S3)
+1. En **Conectar Matera (ESP32)** pulsa **Buscar Matera por Bluetooth** y elige **`Planta-Sensor-Config`**.
+2. Ingresa el nombre y contraseña de tu red Wi-Fi **2.4 GHz** (el PC servidor y la ESP32 deben estar en la misma red) y pulsa **Conectar Matera al Wi-Fi**.
+3. Al aparecer la MAC del ESP32 en **Asignar Sensor a tu Planta**, selecciona tu planta y pulsa **Vincular a Planta**.
+4. Para resetear Wi-Fi/JWT en la ESP32, mantén presionado el botón físico **`BOOT` (GPIO 0)** durante **5 segundos** hasta ver `FACTORY RESET`.
 
-### Ejecución en PowerShell:
-
-- **Modo CSV (predeterminado):**
-  ```powershell
-  $env:TABLA_REFERENCIA="csv"
-  python app.py
-  ```
-
-- **Modo Base de Datos (SQLite):**
-  ```powershell
-  $env:TABLA_REFERENCIA="bd"
-  python app.py
-  ```
-
-### Ejecución en CMD:
-
-- **Modo CSV:**
-  ```cmd
-  set TABLA_REFERENCIA=csv && python app.py
-  ```
-
-- **Modo Base de Datos:**
-  ```cmd
-  set TABLA_REFERENCIA=bd && python app.py
-  ```
-
-*Nota:* Al cambiar esta configuración, el panel lateral de la interfaz web mostrará automáticamente el indicador correspondiente (**Fuente: CSV** o **Fuente: BD**) confirmando la selección sin alterar la lógica de negocio.
-
----
-
-## 8. Ejecución del Simulador ESP32
-
-El simulador emula el comportamiento de un sensor físico transmitiendo telemetría periódica a la API. Siguiendo las buenas prácticas MVC, el simulador **no tiene ninguna regla de negocio** ni evalúa la salud de las plantas; únicamente transmite señales ambientales crudas al puerto HTTP:
-
-1. **Simulación básica con envío cada 3 segundos:**
-   ```powershell
-   python simulador_esp32.py --intervalo 3
-   ```
-
-2. **Simular fluctuaciones ambientales variables:**
-   ```powershell
-   python simulador_esp32.py --dispositivo ESP32-A7F9 --modo variable --intervalo 2
-   ```
-
-3. **Simular envío de señales corruptas para verificar validaciones de hardware (HTTP 400):**
-   ```powershell
-   python simulador_esp32.py --dispositivo ESP32-A7F9 --modo invalido --conteo 5
-   ```
-
----
-
-## 7. Firmware Real ESP32 (`Planta_Inteligente`)
-
-El microcontrolador ESP32-S3 corre el firmware compilado con PlatformIO ubicado en `Planta_Inteligente`:
-- **Sensores reales:** DHT11 en GPIO 4, Sensor de Humedad de Suelo analógico en GPIO 5 (ADC 12-bit calibrado porcentualmente 0-100%), BH1750 en I2C (SDA 8, SCL 9).
-- **Aprovisionamiento BLE/GATT:** Servicio `4fafc201-1fb5-459e-8fcc-c5c9c331914b`, Config Char `beb5483e-36e1-4688-b7f5-ea07361b26a8` y Status Char `beb5483e-36e1-4688-b7f5-ea07361b26a9`.
-- **IP Dinámica:** Soporta recepción del parámetro `host` vía BLE para ubicar el backend en redes dinámicas sin quemar IPs estáticas en código.
-- **Preparación Modular OLED:** Clase abstracta `include/PantallaOLED.h` con `#define USAR_OLED 0` (inactiva sin dependencias externas).
-- **Compilación en PlatformIO:**
-  ```powershell
-  pio run -d "..\Planta_Inteligente"
-  ```
-
----
-
-## 8. Web Bluetooth y Conexión Automática
-
-El usuario conecta su matera directamente desde el panel web de Plantol:
-1. Inicia sesión en Plantol (`http://localhost:5000` o `http://127.0.0.1:5000` desde Chrome o Edge).
-2. Presiona el botón verde **"Conectar Matera"**.
-3. El navegador solicita permiso Bluetooth y escanea dispositivos BLE cercanos.
-4. El frontend autodetecta la dirección IP de la PC mediante `GET /api/servidor/info`, solicita al usuario su SSID/clave WiFi y envía la configuración completa junto con el token JWT del dispositivo por GATT.
-5. El ESP32 se conecta al WiFi, comienza a transmitir telemetría y el dashboard se actualiza en tiempo real.
-
----
-
-## 9. Sistema de Gamificación
-
-- **Puntos por Saludo Diario (+1 pt):** Un saludo por planta por día calendario (reloj UTC del servidor, resistente a trampas).
-- **Puntos por Estabilidad Continua (+1 pt/hora):** 1 hora continua en estado saludable. Si la telemetría se desconecta por > 90 segundos, el contador se reinicia.
-- **Rescate de Humedad (+3 pts):** Bonificación por recuperar la planta tras un estado de sequía.
-- **Penalización por Descuido (-2 pts):** > 1 hora en estado crítico (saldo nunca negativo).
-- **Puntos de Salud (HP 0-100) y Emociones:** Evaluados biológicamente (`EN PELIGRO`, `SEDIENTA`, `ACALORADA`, `CON FRÍO`, `DURMIENDO`, `RADIANTE`).
-
----
-
-## 10. Pruebas Automatizadas
-
-El proyecto incluye **42 pruebas automatizadas** que validan el dominio puro, la gamificación y los endpoints de la API.
-
-### Comando de Ejecución
-Ejecuta la suite completa desde la raíz del proyecto:
-```powershell
-python -m unittest discover tests
+### Sin hardware físico (Simulador CLI)
+```bash
+python simulador_esp32.py
 ```
 
-Para ver la ejecución detallada:
-```powershell
-python -m unittest -v tests/test_modelo.py tests/test_gamificacion.py tests/test_api.py
-```
+---
 
-### Cobertura de las Pruebas (42 pruebas, 100% éxito)
-- **Pruebas unitarias de dominio (`tests/test_modelo.py`):**
-  - Validación de límites físicos de sensores.
-  - Algoritmo de clasificación ambiental y diagnóstico biológico.
-  - Reglas de pertenencia y control de acceso entre usuarios.
-- **Pruebas de gamificación y salud (`tests/test_gamificacion.py`):**
-  - Determinación determinista de HP (0-100) y jerarquía estricta de emociones.
-  - Validación física de humedad de suelo.
-  - Acreditación idempotente de saludos diarios (+1 pt) y control anti-exploit.
-  - Recompensas por cuidado continuo saludable (+1 pt/hora) y reseteo por desconexión (> 90s).
-  - Bonificación por rescate de humedad crítica (+3 pts).
-  - Penalización por descuido continuo (-2 pts con garantía de saldo $\ge 0$).
-- **Pruebas de integración (`tests/test_api.py`):**
-  - Autenticación JWT de usuarios y dispositivos con scopes separados.
-  - Recepción de telemetría con `humedad_suelo` y respuesta con HP y estado emocional.
-  - Endpoints de información del servidor (`/api/servidor/info`), saludos (`/api/plantas/<id>/saludar`) y saldos de puntos.
-  - Emisión y validación de tokens JWT y rechazo de tokens expirados o adulterados.
-  - Verificación de separación estricta de *scopes* (`usuario` vs `dispositivo`).
-  - Rechazo de lecturas no autorizadas y respuestas HTTP 403 Forbidden ante intentos de acceso cruzado entre usuarios.
+## 9. Ejecución de pruebas automatizadas
+
+```bash
+python -m unittest discover tests -v
+```
+Ejecuta las pruebas unitarias del modelo (`test_modelo.py`), pruebas de integración HTTP/JWT/migración (`test_api.py`) y pruebas de gamificación, compras atómicas, persistencia y aislamiento entre usuarios (`test_gamificacion.py`).
 
 ---
 
-## 10. Credenciales de Demostración Local
-
-Para fines de demostración académica y pruebas funcionales en entorno local, la base de datos se inicializa con los siguientes usuarios de prueba:
-
-| Usuario | Contraseña | Rol / Propósito |
-| :--- | :--- | :--- |
-| `felipe` | `plantol123` | Propietario de plantas demo (Cactus, Helecho) |
-| `carlos` | `plantol123` | Usuario secundario para comprobar aislamiento de plantas (R7) |
-
-> **Nota de Seguridad:** Estas credenciales son de uso exclusivo en entornos de prueba y desarrollo local. En implementaciones de producción deben sustituirse por mecanismos de gestión de identidades seguras y almacenamiento de secretos en variables de entorno.
+## 10. Problemas comunes y limitaciones conocidas
+- **No aparece la ESP32 en Bluetooth:** verifica usar Chrome o Edge en `http://127.0.0.1:5000` o `http://localhost:5000` y que el ESP32 no esté ya conectado a Wi-Fi (haz Factory Reset de 5s en `BOOT` si es necesario).
+- **La ESP32 se conecta al Wi-Fi pero no llega al servidor:** algunos hotspots móviles aíslan clientes entre sí (AP Isolation) o el firewall de Windows bloquea el puerto `5000`. Usa una red Wi-Fi local estándar y permite el puerto `5000` TCP entrante.
+- **Limitación de seguridad documentada en tokens de dispositivo:** `POST /api/dispositivos/<dispositivo_id>/token` sigue habilitado sin autenticación propia por compatibilidad con el firmware ya flasheado en el ESP32-S3. Aunque `POST /api/dispositivos/reclamar` ya devuelve el JWT directamente tras validar el token BLE de pairing, cerrar `POST /token` requiere una actualización coordinada futura del firmware.
+- **Verificación visual responsive:** las reglas CSS para `768 px`, `430 px`, `390 px` y `360 px` requieren inspección visual final en Chrome/Edge DevTools según tu entorno local.

@@ -27,6 +27,7 @@ from Modelo.entidades import (
     Lectura,
     Planta,
     RangosEspecie,
+    SIN_RESPUESTA,
     TransaccionPuntos,
     Usuario,
 )
@@ -122,7 +123,7 @@ class TablaReferenciaBD(TablaReferenciaPort):
         self._inicializar_tabla()
 
     def _conectar(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._ruta_db)
+        conn = sqlite3.connect(self._ruta_db, timeout=15.0, isolation_level=None)
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -213,7 +214,7 @@ class HistorialLecturasBD(HistorialLecturasPort):
         self._inicializar_tabla()
 
     def _conectar(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._ruta_db)
+        conn = sqlite3.connect(self._ruta_db, timeout=15.0, isolation_level=None)
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -248,7 +249,15 @@ class HistorialLecturasBD(HistorialLecturasPort):
             cursor.execute(
                 "CREATE INDEX IF NOT EXISTS idx_historial_planta ON historial_lecturas(planta_id)"
             )
+            self._asegurar_columna(cursor, "historial_lecturas", "humedad_suelo", "REAL")
             conn.commit()
+
+    @staticmethod
+    def _asegurar_columna(cursor: sqlite3.Cursor, tabla: str, columna: str, definicion: str) -> None:
+        cursor.execute(f"PRAGMA table_info({tabla})")
+        columnas = {fila[1] for fila in cursor.fetchall()}
+        if columna not in columnas:
+            cursor.execute(f"ALTER TABLE {tabla} ADD COLUMN {columna} {definicion}")
 
     def guardar_lectura(
         self, lectura: Lectura, diagnostico: Optional[DiagnosticoPlanta] = None
@@ -340,7 +349,7 @@ class HistorialLecturasBD(HistorialLecturasPort):
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT id, dispositivo_id, planta_id, timestamp, luminosidad, humedad, temperatura,
+                SELECT id, dispositivo_id, planta_id, timestamp, luminosidad, humedad, temperatura, humedad_suelo,
                        estado_global, diagnostico_json, fecha_creacion
                 FROM historial_lecturas
                 WHERE planta_id = ?
@@ -359,6 +368,7 @@ class HistorialLecturasBD(HistorialLecturasPort):
                     "timestamp": f["timestamp"],
                     "luminosidad": f["luminosidad"],
                     "humedad": f["humedad"],
+                    "humedad_suelo": f["humedad_suelo"] if "humedad_suelo" in f.keys() else None,
                     "temperatura": f["temperatura"],
                     "estado_global": f["estado_global"],
                     "diagnostico": diag,
@@ -400,6 +410,55 @@ class HistorialLecturasBD(HistorialLecturasPort):
 # Adaptador 4: Repositorio SQLite (Plantas, Usuarios, Dispositivos)
 # =====================================================================
 
+VENTANA_ACTIVIDAD_DISPOSITIVO_SEG = 120
+
+
+def evaluar_actividad_dispositivo(
+    ultimo_contacto: Optional[str],
+    estado_conexion: Optional[str],
+    ventana_seg: int = VENTANA_ACTIVIDAD_DISPOSITIVO_SEG,
+    ahora: Optional[datetime.datetime] = None,
+) -> dict:
+    """
+    Evalúa si un dispositivo ESP32 tiene actividad real y reciente dentro de la ventana configurada.
+    """
+    estado_norm = (estado_conexion or "").strip().upper()
+    if not ultimo_contacto:
+        return {
+            "en_linea": False,
+            "estado_efectivo": SIN_RESPUESTA,
+            "segundos_sin_contacto": None,
+        }
+
+    try:
+        dt_contacto = datetime.datetime.fromisoformat(str(ultimo_contacto).replace("Z", "+00:00"))
+    except ValueError:
+        return {
+            "en_linea": False,
+            "estado_efectivo": SIN_RESPUESTA,
+            "segundos_sin_contacto": None,
+        }
+
+    if ahora is None:
+        ref = datetime.datetime.now(dt_contacto.tzinfo) if dt_contacto.tzinfo is not None else datetime.datetime.now()
+    else:
+        if dt_contacto.tzinfo is not None and ahora.tzinfo is None:
+            ref = ahora.replace(tzinfo=dt_contacto.tzinfo)
+        elif dt_contacto.tzinfo is None and ahora.tzinfo is not None:
+            ref = ahora.replace(tzinfo=None)
+        else:
+            ref = ahora
+
+    delta_seg = (ref - dt_contacto).total_seconds()
+    segundos = max(0, int(delta_seg))
+    en_linea = estado_norm == CONECTADO and (-5 <= delta_seg <= max(1, int(ventana_seg)))
+    return {
+        "en_linea": en_linea,
+        "estado_efectivo": CONECTADO if en_linea else SIN_RESPUESTA,
+        "segundos_sin_contacto": segundos,
+    }
+
+
 class RepositorioSQLite(
     RepositorioPlantasPort,
     RepositorioUsuariosPort,
@@ -407,15 +466,34 @@ class RepositorioSQLite(
 ):
     """Implementa almacenamiento de entidades en base de datos SQLite."""
 
-    def __init__(self, ruta_db: str) -> None:
+    def __init__(
+        self,
+        ruta_db: str,
+        ventana_actividad_seg: Optional[int] = None,
+        incluir_demo: bool = True,
+    ) -> None:
         self._ruta_db = ruta_db
+        if ventana_actividad_seg is not None:
+            self._ventana_actividad_seg = max(1, int(ventana_actividad_seg))
+        else:
+            try:
+                self._ventana_actividad_seg = max(
+                    1, int(os.environ.get("PLANTOL_DISPOSITIVO_VENTANA_SEG", str(VENTANA_ACTIVIDAD_DISPOSITIVO_SEG)))
+                )
+            except ValueError:
+                self._ventana_actividad_seg = VENTANA_ACTIVIDAD_DISPOSITIVO_SEG
+        self._incluir_demo = bool(incluir_demo)
         dir_padre = os.path.dirname(os.path.abspath(self._ruta_db))
         if dir_padre:
             os.makedirs(dir_padre, exist_ok=True)
         self._inicializar_tablas()
 
+    @property
+    def ventana_actividad_seg(self) -> int:
+        return self._ventana_actividad_seg
+
     def _conectar(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._ruta_db)
+        conn = sqlite3.connect(self._ruta_db, timeout=15.0, isolation_level=None)
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -475,7 +553,28 @@ class RepositorioSQLite(
                 )
                 """
             )
+            # Migraciones seguras no destructivas para esquemas previos
+            self._asegurar_columna(cursor, "usuarios", "rol", "TEXT NOT NULL DEFAULT 'USUARIO'")
+            self._asegurar_columna(cursor, "dispositivos", "mac", "TEXT")
+            self._asegurar_columna(cursor, "dispositivos", "planta_id", "INTEGER")
+            self._asegurar_columna(cursor, "dispositivos", "ultimo_contacto", "TEXT")
+            self._asegurar_columna(cursor, "dispositivos", "estado_conexion", "TEXT NOT NULL DEFAULT 'CONECTADO'")
+            self._asegurar_columna(cursor, "dispositivos", "es_demo", "INTEGER NOT NULL DEFAULT 0")
+            self._asegurar_columna(cursor, "dispositivos", "usuario_id", "INTEGER")
+            cursor.execute("PRAGMA table_info(codigos_vinculacion)")
+            cols_cod = {fila[1] for fila in cursor.fetchall()}
+            if "fecha_creacion" not in cols_cod:
+                cursor.execute("ALTER TABLE codigos_vinculacion ADD COLUMN fecha_creacion TEXT NOT NULL DEFAULT ''")
+                if "creado_en" in cols_cod:
+                    cursor.execute("UPDATE codigos_vinculacion SET fecha_creacion = creado_en WHERE fecha_creacion = ''")
             conn.commit()
+
+    @staticmethod
+    def _asegurar_columna(cursor: sqlite3.Cursor, tabla: str, columna: str, definicion: str) -> None:
+        cursor.execute(f"PRAGMA table_info({tabla})")
+        columnas = {fila[1] for fila in cursor.fetchall()}
+        if columna not in columnas:
+            cursor.execute(f"ALTER TABLE {tabla} ADD COLUMN {columna} {definicion}")
 
     # --- RepositorioUsuariosPort ---
     def guardar_usuario(self, usuario: Usuario) -> Usuario:
@@ -635,14 +734,30 @@ class RepositorioSQLite(
             return filas_afectadas > 0
 
     # --- RepositorioDispositivosPort ---
+    @staticmethod
+    def _fila_a_dispositivo(fila: sqlite3.Row) -> Dispositivo:
+        claves = fila.keys()
+        es_demo = bool(fila["es_demo"]) if "es_demo" in claves else False
+        usuario_id = fila["usuario_id"] if "usuario_id" in claves else None
+        return Dispositivo(
+            id=fila["id"],
+            secret_hash=fila["secret_hash"],
+            mac=fila["mac"] or "",
+            planta_id=fila["planta_id"],
+            ultimo_contacto=fila["ultimo_contacto"],
+            estado_conexion=fila["estado_conexion"],
+            es_demo=es_demo,
+            usuario_id=int(usuario_id) if usuario_id is not None else None,
+        )
+
     def guardar_dispositivo(self, dispositivo: Dispositivo) -> Dispositivo:
         with self._conectar() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
                 INSERT OR REPLACE INTO dispositivos 
-                (id, secret_hash, mac, planta_id, ultimo_contacto, estado_conexion)
-                VALUES (?, ?, ?, ?, ?, ?)
+                (id, secret_hash, mac, planta_id, ultimo_contacto, estado_conexion, es_demo, usuario_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     dispositivo.id,
@@ -651,6 +766,8 @@ class RepositorioSQLite(
                     dispositivo.planta_id,
                     dispositivo.ultimo_contacto,
                     dispositivo.estado_conexion,
+                    1 if getattr(dispositivo, "es_demo", False) else 0,
+                    getattr(dispositivo, "usuario_id", None),
                 ),
             )
             conn.commit()
@@ -663,51 +780,46 @@ class RepositorioSQLite(
             fila = cursor.fetchone()
             if not fila:
                 return None
-            return Dispositivo(
-                id=fila["id"],
-                secret_hash=fila["secret_hash"],
-                mac=fila["mac"] or "",
-                planta_id=fila["planta_id"],
-                ultimo_contacto=fila["ultimo_contacto"],
-                estado_conexion=fila["estado_conexion"],
-            )
+            return self._fila_a_dispositivo(fila)
 
-    def listar_dispositivos(self) -> List[Dispositivo]:
+    def listar_dispositivos(self, usuario_id: Optional[int] = None) -> List[Dispositivo]:
         with self._conectar() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM dispositivos ORDER BY id ASC")
-            return [
-                Dispositivo(
-                    id=fila["id"],
-                    secret_hash=fila["secret_hash"],
-                    mac=fila["mac"] or "",
-                    planta_id=fila["planta_id"],
-                    ultimo_contacto=fila["ultimo_contacto"],
-                    estado_conexion=fila["estado_conexion"],
-                )
-                for fila in cursor.fetchall()
-            ]
+            filtros = []
+            params: list = []
+            if not self._incluir_demo:
+                filtros.append("COALESCE(es_demo, 0) = 0")
+            if usuario_id is not None:
+                filtros.append("usuario_id = ?")
+                params.append(int(usuario_id))
+            where_sql = f"WHERE {' AND '.join(filtros)}" if filtros else ""
+            cursor.execute(f"SELECT * FROM dispositivos {where_sql} ORDER BY id ASC", params)
+            return [self._fila_a_dispositivo(fila) for fila in cursor.fetchall()]
 
-    def listar_dispositivos_disponibles(self) -> List[Dispositivo]:
+    def listar_dispositivos_disponibles(
+        self,
+        ventana_segundos: Optional[int] = None,
+        usuario_id: Optional[int] = None,
+    ) -> List[Dispositivo]:
+        ventana = self._ventana_actividad_seg if ventana_segundos is None else max(1, int(ventana_segundos))
         with self._conectar() as conn:
             cursor = conn.cursor()
+            filtros = ["(planta_id IS NULL OR planta_id = 0)", "usuario_id IS NOT NULL"]
+            params: list = []
+            if not self._incluir_demo:
+                filtros.append("COALESCE(es_demo, 0) = 0")
+            if usuario_id is not None:
+                filtros.append("usuario_id = ?")
+                params.append(int(usuario_id))
             cursor.execute(
-                """
-                SELECT * FROM dispositivos 
-                WHERE planta_id IS NULL OR planta_id = 0
-                ORDER BY id ASC
-                """
+                f"SELECT * FROM dispositivos WHERE {' AND '.join(filtros)} ORDER BY id ASC",
+                params,
             )
+            candidatos = [self._fila_a_dispositivo(fila) for fila in cursor.fetchall()]
             return [
-                Dispositivo(
-                    id=fila["id"],
-                    secret_hash=fila["secret_hash"],
-                    mac=fila["mac"] or "",
-                    planta_id=fila["planta_id"],
-                    ultimo_contacto=fila["ultimo_contacto"],
-                    estado_conexion=fila["estado_conexion"],
-                )
-                for fila in cursor.fetchall()
+                d
+                for d in candidatos
+                if evaluar_actividad_dispositivo(d.ultimo_contacto, d.estado_conexion, ventana)["en_linea"]
             ]
 
     def registrar_o_conectar_dispositivo(
@@ -716,6 +828,7 @@ class RepositorioSQLite(
         mac: Optional[str] = None,
         red_wifi: Optional[str] = None,
         liberar_planta: bool = False,
+        usuario_id: Optional[int] = None,
     ) -> Dispositivo:
         ahora = datetime.datetime.now().isoformat()
         dev_id = dispositivo_id.strip().upper()
@@ -726,20 +839,22 @@ class RepositorioSQLite(
             if fila:
                 mac_val = mac or fila["mac"] or f"24:6F:28:{dev_id[-4:]}"
                 planta_id_val = fila["planta_id"]
+                owner_actual = fila["usuario_id"] if "usuario_id" in fila.keys() else None
+                owner_final = owner_actual if owner_actual is not None else usuario_id
                 if liberar_planta and planta_id_val is not None:
                     cursor.execute(
                         "UPDATE plantas SET dispositivo_id = NULL WHERE UPPER(dispositivo_id) = ?",
                         (dev_id,),
                     )
                     cursor.execute(
-                        "UPDATE dispositivos SET estado_conexion = ?, ultimo_contacto = ?, planta_id = NULL WHERE UPPER(id) = ?",
-                        (CONECTADO, ahora, dev_id),
+                        "UPDATE dispositivos SET estado_conexion = ?, ultimo_contacto = ?, planta_id = NULL, usuario_id = ? WHERE UPPER(id) = ?",
+                        (CONECTADO, ahora, owner_final, dev_id),
                     )
                     planta_id_val = None
                 else:
                     cursor.execute(
-                        "UPDATE dispositivos SET estado_conexion = ?, ultimo_contacto = ? WHERE UPPER(id) = ?",
-                        (CONECTADO, ahora, dev_id),
+                        "UPDATE dispositivos SET estado_conexion = ?, ultimo_contacto = ?, usuario_id = ? WHERE UPPER(id) = ?",
+                        (CONECTADO, ahora, owner_final, dev_id),
                     )
                 conn.commit()
                 return Dispositivo(
@@ -749,15 +864,16 @@ class RepositorioSQLite(
                     planta_id=planta_id_val,
                     ultimo_contacto=ahora,
                     estado_conexion=CONECTADO,
+                    usuario_id=int(owner_final) if owner_final is not None else None,
                 )
             else:
                 mac_val = mac or f"24:6F:28:{dev_id[-4:]}"
                 cursor.execute(
                     """
-                    INSERT INTO dispositivos (id, secret_hash, mac, planta_id, ultimo_contacto, estado_conexion)
-                    VALUES (?, ?, ?, NULL, ?, ?)
+                    INSERT INTO dispositivos (id, secret_hash, mac, planta_id, ultimo_contacto, estado_conexion, es_demo, usuario_id)
+                    VALUES (?, ?, ?, NULL, ?, ?, 0, ?)
                     """,
-                    (dev_id, "secret_hash_demo", mac_val, ahora, CONECTADO),
+                    (dev_id, "secret_hash_demo", mac_val, ahora, CONECTADO, usuario_id),
                 )
                 conn.commit()
                 return Dispositivo(
@@ -767,6 +883,7 @@ class RepositorioSQLite(
                     planta_id=None,
                     ultimo_contacto=ahora,
                     estado_conexion=CONECTADO,
+                    usuario_id=usuario_id,
                 )
 
     def actualizar_ultimo_contacto(self, dispositivo_id: str, fecha_hora: str) -> None:
@@ -815,19 +932,54 @@ class RepositorioSQLite(
             )
             conn.commit()
 
+    def consumir_token_pairing_con_usuario(self, token: str) -> Optional[int]:
+        """Valida y consume atómicamente un token de pairing, retornando el usuario_id propietario."""
+        if not token:
+            return None
+        token_norm = token.strip().upper()
+        with self._conectar() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                fila = conn.execute(
+                    "SELECT dispositivo_id, usado FROM codigos_vinculacion WHERE codigo = ?",
+                    (token_norm,),
+                ).fetchone()
+                if not fila or fila["usado"] == 1:
+                    conn.execute("ROLLBACK")
+                    return None
+                cur = conn.execute(
+                    "UPDATE codigos_vinculacion SET usado = 1 WHERE codigo = ? AND usado = 0",
+                    (token_norm,),
+                )
+                if cur.rowcount == 0:
+                    conn.execute("ROLLBACK")
+                    return None
+                conn.execute("COMMIT")
+                ref = str(fila["dispositivo_id"] or "")
+                if ref.startswith("PAIRING-USER-"):
+                    try:
+                        return int(ref.replace("PAIRING-USER-", "", 1))
+                    except ValueError:
+                        return None
+                return None
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+
     def validar_y_consumir_token_pairing(self, token: str) -> bool:
         if not token:
             return False
+        token_norm = token.strip().upper()
         with self._conectar() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT usado FROM codigos_vinculacion WHERE codigo = ?",
-                (token.strip().upper(),),
+                (token_norm,),
             )
             fila = cursor.fetchone()
             if not fila or fila["usado"] == 1:
                 return False
-            cursor.execute("UPDATE codigos_vinculacion SET usado = 1 WHERE codigo = ?", (token.strip().upper(),))
+            cursor.execute("UPDATE codigos_vinculacion SET usado = 1 WHERE codigo = ?", (token_norm,))
             conn.commit()
             return True
 
@@ -881,7 +1033,7 @@ class RepositorioGamificacionBD(RepositorioGamificacionPort):
         self._inicializar_tablas()
 
     def _conectar(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._ruta_db)
+        conn = sqlite3.connect(self._ruta_db, timeout=15.0, isolation_level=None)
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -907,9 +1059,17 @@ class RepositorioGamificacionBD(RepositorioGamificacionPort):
                     motivo TEXT NOT NULL,
                     evento TEXT NOT NULL,
                     fecha TEXT NOT NULL,
-                    tipo TEXT NOT NULL
+                    tipo TEXT NOT NULL,
+                    clave_idempotencia TEXT
                 )
                 """
+            )
+            cursor.execute("PRAGMA table_info(gamificacion_transacciones)")
+            cols_tx = {fila[1] for fila in cursor.fetchall()}
+            if "clave_idempotencia" not in cols_tx:
+                cursor.execute("ALTER TABLE gamificacion_transacciones ADD COLUMN clave_idempotencia TEXT")
+            cursor.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_tx_idempotencia ON gamificacion_transacciones(clave_idempotencia) WHERE clave_idempotencia IS NOT NULL"
             )
             cursor.execute(
                 """
@@ -954,52 +1114,92 @@ class RepositorioGamificacionBD(RepositorioGamificacionPort):
 
     def registrar_transaccion(self, transaccion: TransaccionPuntos) -> TransaccionPuntos:
         ahora = transaccion.fecha or datetime.datetime.now(datetime.timezone.utc).isoformat()
+        clave_idem = getattr(transaccion, "clave_idempotencia", None)
         with self._conectar() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                INSERT INTO gamificacion_transacciones 
-                (usuario_id, planta_id, cantidad, motivo, evento, fecha, tipo)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    transaccion.usuario_id,
-                    transaccion.planta_id,
-                    transaccion.cantidad,
-                    transaccion.motivo,
-                    transaccion.evento,
-                    ahora,
-                    transaccion.tipo,
-                ),
-            )
-            tx_id = cursor.lastrowid
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = conn.cursor()
+                if clave_idem:
+                    existente = cursor.execute(
+                        "SELECT id FROM gamificacion_transacciones WHERE clave_idempotencia = ?",
+                        (clave_idem,),
+                    ).fetchone()
+                    if existente is not None:
+                        conn.execute("ROLLBACK")
+                        return TransaccionPuntos(
+                            id=int(existente["id"]),
+                            usuario_id=transaccion.usuario_id,
+                            planta_id=transaccion.planta_id,
+                            cantidad=0,
+                            motivo=transaccion.motivo,
+                            evento=transaccion.evento,
+                            fecha=ahora,
+                            tipo=transaccion.tipo,
+                            clave_idempotencia=clave_idem,
+                        )
 
-            cursor.execute("SELECT saldo FROM gamificacion_puntos WHERE usuario_id = ?", (transaccion.usuario_id,))
-            fila = cursor.fetchone()
-            if fila is None:
-                nuevo_saldo = max(0, transaccion.cantidad)
                 cursor.execute(
-                    "INSERT INTO gamificacion_puntos (usuario_id, saldo, actualizado_en) VALUES (?, ?, ?)",
-                    (transaccion.usuario_id, nuevo_saldo, ahora),
+                    """
+                    INSERT INTO gamificacion_transacciones 
+                    (usuario_id, planta_id, cantidad, motivo, evento, fecha, tipo, clave_idempotencia)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        transaccion.usuario_id,
+                        transaccion.planta_id,
+                        transaccion.cantidad,
+                        transaccion.motivo,
+                        transaccion.evento,
+                        ahora,
+                        transaccion.tipo,
+                        clave_idem,
+                    ),
                 )
-            else:
-                nuevo_saldo = max(0, int(fila["saldo"]) + transaccion.cantidad)
-                cursor.execute(
-                    "UPDATE gamificacion_puntos SET saldo = ?, actualizado_en = ? WHERE usuario_id = ?",
-                    (nuevo_saldo, ahora, transaccion.usuario_id),
-                )
+                tx_id = cursor.lastrowid
 
-            conn.commit()
-            return TransaccionPuntos(
-                id=tx_id,
-                usuario_id=transaccion.usuario_id,
-                planta_id=transaccion.planta_id,
-                cantidad=transaccion.cantidad,
-                motivo=transaccion.motivo,
-                evento=transaccion.evento,
-                fecha=ahora,
-                tipo=transaccion.tipo,
-            )
+                cursor.execute("SELECT saldo FROM gamificacion_puntos WHERE usuario_id = ?", (transaccion.usuario_id,))
+                fila = cursor.fetchone()
+                if fila is None:
+                    nuevo_saldo = max(0, transaccion.cantidad)
+                    cursor.execute(
+                        "INSERT INTO gamificacion_puntos (usuario_id, saldo, actualizado_en) VALUES (?, ?, ?)",
+                        (transaccion.usuario_id, nuevo_saldo, ahora),
+                    )
+                else:
+                    nuevo_saldo = max(0, int(fila["saldo"]) + transaccion.cantidad)
+                    cursor.execute(
+                        "UPDATE gamificacion_puntos SET saldo = ?, actualizado_en = ? WHERE usuario_id = ?",
+                        (nuevo_saldo, ahora, transaccion.usuario_id),
+                    )
+
+                conn.execute("COMMIT")
+                return TransaccionPuntos(
+                    id=tx_id,
+                    usuario_id=transaccion.usuario_id,
+                    planta_id=transaccion.planta_id,
+                    cantidad=transaccion.cantidad,
+                    motivo=transaccion.motivo,
+                    evento=transaccion.evento,
+                    fecha=ahora,
+                    tipo=transaccion.tipo,
+                    clave_idempotencia=clave_idem,
+                )
+            except sqlite3.IntegrityError:
+                conn.execute("ROLLBACK")
+                return TransaccionPuntos(
+                    id=None,
+                    usuario_id=transaccion.usuario_id,
+                    planta_id=transaccion.planta_id,
+                    cantidad=0,
+                    motivo=transaccion.motivo,
+                    evento=transaccion.evento,
+                    fecha=ahora,
+                    tipo=transaccion.tipo,
+                    clave_idempotencia=clave_idem,
+                )
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
 
     def listar_transacciones(
         self, usuario_id: int, limite: int = 50

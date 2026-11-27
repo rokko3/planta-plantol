@@ -15,30 +15,125 @@ let especiesDisponibles = [];
 let pollingTimer = null;
 let currentModalPlantaId = null;
 let dispositivoBleSeleccionado = null;
+const operacionesEnCurso = new Set();
+
+function escapeHtml(valor) {
+  if (valor === null || valor === undefined) return "";
+  return String(valor)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function traducirErrorAmigable(res, contexto = "operación") {
+  const errCode = res?.data?.error || "";
+  const status = res?.status ?? 0;
+
+  if (status === 0) {
+    return "No pudimos comunicarnos con Plantol en este momento. Verifica tu conexión e intenta de nuevo; tus datos están seguros.";
+  }
+  if (status === 401 || errCode === "TOKEN_INVALIDO" || errCode === "AUTENTICACION_REQUERIDA") {
+    return "Tu sesión terminó por seguridad. Vuelve a iniciar sesión para continuar; tus plantas siguen guardadas.";
+  }
+  if (status === 403 || errCode === "ACCESO_DENEGADO") {
+    return "No tienes permiso para realizar esta acción sobre este recurso.";
+  }
+  if (status === 404 || errCode === "PLANTA_NO_ENCONTRADA") {
+    return "No encontramos el elemento solicitado. Es posible que ya haya sido eliminado.";
+  }
+  if (errCode === "SALUDO_YA_REALIZADO") {
+    return "Ya saludaste a esta planta hoy. Vuelve mañana para ganar otro punto.";
+  }
+  if (errCode === "ESPECIE_NO_SOPORTADA") {
+    return "La especie seleccionada no está disponible en el catálogo actual. Elige una de la lista.";
+  }
+  if (errCode === "DATOS_INCOMPLETOS") {
+    return `Faltan datos obligatorios para completar la ${contexto}. Revisa los campos marcados.`;
+  }
+  if (status >= 500) {
+    return `Ocurrió un inconveniente temporal en el servidor al procesar la ${contexto}. Puedes reintentar en unos segundos; tus datos están seguros.`;
+  }
+  return res?.data?.mensaje || `No se pudo completar la ${contexto}. Revisa la información e intenta nuevamente.`;
+}
 
 // ==========================================================================
 // 1. Inicialización y Navegación
 // ==========================================================================
 
 document.addEventListener("DOMContentLoaded", async () => {
-  // 1. Si no hay sesión previa, autenticar automáticamente al usuario demo 'felipe'
-  if (!authToken || !currentUser) {
-    await autoLoginDemo();
-  } else {
-    actualizarVistaUsuario();
-  }
-
-  // 2. Cargar metadatos iniciales
   await cargarFuenteConfig();
   await cargarEspecies();
-  await cargarDispositivosSelect();
 
-  // 3. Sincronizar dashboard y arrancar el ciclo de actualización asíncrona (R6)
-  await sincronizarDashboard();
+  // Delegación segura de eventos en tarjetas y dispositivos vinculados (evita XSS en onclick)
+  const plantsGrid = document.getElementById("plantsGrid");
+  if (plantsGrid) {
+    plantsGrid.addEventListener("click", (ev) => {
+      const btn = ev.target.closest("[data-action]");
+      if (!btn) return;
+      const action = btn.dataset.action;
+      const id = Number(btn.dataset.id);
+      if (action === "saludar") saludarPlanta(id, btn);
+      else if (action === "historial") abrirModalHistorial(id, btn.dataset.nombre || "");
+      else if (action === "eliminar") eliminarPlanta(id, btn.dataset.nombre || "", btn);
+      else if (action === "desvincular") desvincularDispositivo(id, btn.dataset.dev || "", btn);
+    });
+  }
+
+  const listaVinculados = document.getElementById("listaSensoresVinculados");
+  if (listaVinculados) {
+    listaVinculados.addEventListener("click", (ev) => {
+      const btn = ev.target.closest("[data-action='desvincular']");
+      if (!btn) return;
+      desvincularDispositivo(Number(btn.dataset.id), btn.dataset.dev || "", btn);
+    });
+  }
+
+  actualizarVistaUsuario();
+  aplicarEstadoAutenticacion();
+
+  if (!esSesionActiva()) {
+    actualizarIndicadorConexion(false, "Inicia sesión para ver tus plantas");
+  } else {
+    await cargarDispositivosSelect();
+    await sincronizarDashboard();
+    navegar("dashboard");
+  }
+
   iniciarPollingAsincrono();
 });
 
+function esSesionActiva() {
+  return Boolean(authToken && currentUser && currentUser.id);
+}
+
+function aplicarEstadoAutenticacion() {
+  const authScreen = document.getElementById("authScreen");
+  const appContainer = document.getElementById("appContainer");
+  const activa = esSesionActiva();
+
+  if (authScreen) authScreen.style.display = activa ? "none" : "flex";
+  if (appContainer) appContainer.style.display = activa ? "flex" : "none";
+
+  if (!activa) {
+    // Limpiar vistas privadas de sesiones anteriores para evitar fugas visuales
+    ["plantsGrid", "virtualRoomCanvas", "catalogoTiendaGrid", "listaMisiones", "listaLogros", "listaSensoresVinculados"].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = "";
+    });
+    const alerts = document.getElementById("alertsContainer");
+    if (alerts) { alerts.innerHTML = ""; alerts.style.display = "none"; }
+  }
+}
+
 function navegar(paginaId) {
+  if (!esSesionActiva()) {
+    aplicarEstadoAutenticacion();
+    mostrarErrorAuth("Inicia sesión para acceder a esta sección.");
+    return false;
+  }
+
   // Actualizar botones de navegación
   document.querySelectorAll(".nav-item").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.page === paginaId);
@@ -51,10 +146,12 @@ function navegar(paginaId) {
 
   // Títulos dinámicos de cabecera
   const titulos = {
-    "dashboard": ["Mis Plantas", "Supervisión en tiempo real de tu invernadero"],
-    "nueva-planta": ["Agregar Planta", "Registra un nuevo ejemplar en tu colección"],
-    "vincular": ["Aprovisionar y Vincular ESP32", "Conexión Bluetooth GATT y vinculación de sensores en red"],
-    "cuenta": ["Cuenta y Acceso", "Administración de identidad y reglas de propiedad"],
+    "dashboard": ["Mis Plantas", "Supervisión en tiempo real de tus plantas"],
+    "nueva-planta": ["Agregar Planta", "Registra una nueva planta en tu colección"],
+    "vincular": ["Conectar Matera (ESP32)", "Configura el Wi-Fi por Bluetooth y asígnala a una planta"],
+    "habitacion": ["Habitación Virtual", "Espacio personal interactivo con tus plantas y decoraciones"],
+    "tienda": ["Tienda, Misiones y Logros", "Progreso, recompensas y objetos para tu rincón botánico"],
+    "cuenta": ["Cuenta y Acceso", "Administra tu sesión activa y detalles técnicos"],
   };
 
   if (titulos[paginaId]) {
@@ -65,7 +162,10 @@ function navegar(paginaId) {
   if (paginaId === "vincular") {
     actualizarSelectPlantasVincular();
     cargarDispositivosDisponibles();
+  } else if ((paginaId === "habitacion" || paginaId === "tienda") && typeof cargarGamificacionAvanzada === "function") {
+    cargarGamificacionAvanzada();
   }
+  return true;
 }
 
 // ==========================================================================
@@ -84,6 +184,7 @@ async function apiFetch(endpoint, opciones = {}) {
 
   try {
     const respuesta = await fetch(`${API_BASE}${endpoint}`, {
+      cache: "no-store",
       ...opciones,
       headers,
     });
@@ -105,14 +206,75 @@ async function apiFetch(endpoint, opciones = {}) {
 // 3. Autenticación y Cuentas (R7)
 // ==========================================================================
 
-async function autoLoginDemo() {
-  const res = await apiFetch("/api/auth/login", {
-    method: "POST",
-    body: JSON.stringify({ username: "felipe", password: "plantol123" }),
-  });
+async function entrarModoDemo() {
+  if (operacionesEnCurso.has("demo")) return;
+  operacionesEnCurso.add("demo");
+  const btn = document.getElementById("btnModoDemo");
+  if (btn) btn.disabled = true;
+  try {
+    const res = await apiFetch("/api/auth/demo", { method: "POST" });
+    if (res.ok) {
+      guardarSesion(res.data.token, res.data.usuario);
+      mostrarToast(`Sesión demo iniciada como ${res.data.usuario.nombre}.`);
+      await cargarDispositivosSelect();
+      await sincronizarDashboard();
+      navegar("dashboard");
+    } else {
+      mostrarToast(traducirErrorAmigable(res, "entrada en modo demo"), "warning");
+    }
+  } finally {
+    operacionesEnCurso.delete("demo");
+    if (btn) btn.disabled = false;
+  }
+}
 
-  if (res.ok) {
-    guardarSesion(res.data.token, res.data.usuario);
+let authModoActual = "login";
+
+function cambiarModoAuth(modo) {
+  authModoActual = modo === "register" ? "register" : "login";
+  const esReg = authModoActual === "register";
+  const tabLogin = document.getElementById("tabAuthLogin");
+  const tabReg = document.getElementById("tabAuthRegister");
+  const grpNombre = document.getElementById("groupAuthNombre");
+  const grpEmail = document.getElementById("groupAuthEmail");
+  const passHelp = document.getElementById("authPassHelp");
+  const titulo = document.getElementById("authFormTitle");
+  const sub = document.getElementById("authFormSubtitle");
+  const btnSubmit = document.getElementById("btnAuthSubmit");
+  const passInput = document.getElementById("inputAuthPass");
+
+  if (tabLogin) tabLogin.classList.toggle("active", !esReg);
+  if (tabReg) tabReg.classList.toggle("active", esReg);
+  if (grpNombre) grpNombre.style.display = esReg ? "block" : "none";
+  if (grpEmail) grpEmail.style.display = esReg ? "block" : "none";
+  if (passHelp) passHelp.style.display = esReg ? "block" : "none";
+  if (titulo) titulo.textContent = esReg ? "Crea tu cuenta en Plantol" : "Bienvenido de nuevo";
+  if (sub) sub.textContent = esReg
+    ? "Regístrate para vincular tu ESP32 y cuidar tus plantas."
+    : "Ingresa con tu cuenta para ver tus plantas y dispositivos.";
+  if (btnSubmit) btnSubmit.textContent = esReg ? "Crear Cuenta" : "Iniciar Sesión";
+  if (passInput) passInput.autocomplete = esReg ? "new-password" : "current-password";
+  mostrarErrorAuth("");
+}
+
+function togglePasswordAuth() {
+  const input = document.getElementById("inputAuthPass");
+  const btn = document.getElementById("btnToggleAuthPass");
+  if (!input || !btn) return;
+  const mostrar = input.type === "password";
+  input.type = mostrar ? "text" : "password";
+  btn.textContent = mostrar ? "Ocultar" : "Ver";
+}
+
+function mostrarErrorAuth(mensaje) {
+  const box = document.getElementById("authErrorBox");
+  if (!box) return;
+  if (!mensaje) {
+    box.style.display = "none";
+    box.textContent = "";
+  } else {
+    box.style.display = "block";
+    box.textContent = mensaje;
   }
 }
 
@@ -121,18 +283,23 @@ function guardarSesion(token, usuario) {
   currentUser = usuario;
   localStorage.setItem("plantol_token", token);
   localStorage.setItem("plantol_user", JSON.stringify(usuario));
+  mostrarErrorAuth("");
   actualizarVistaUsuario();
+  aplicarEstadoAutenticacion();
   actualizarIndicadorConexion(true);
 }
 
-function cerrarSesion() {
+function cerrarSesion(silencioso = false) {
   authToken = null;
   currentUser = null;
+  if (typeof gamificacionResumen !== "undefined") gamificacionResumen = null;
   localStorage.removeItem("plantol_token");
   localStorage.removeItem("plantol_user");
-  mostrarToast("Sesión cerrada.");
-  navegar("cuenta");
+  const passInput = document.getElementById("inputAuthPass");
+  if (passInput) passInput.value = "";
   actualizarVistaUsuario();
+  aplicarEstadoAutenticacion();
+  if (!silencioso) mostrarToast("Sesión cerrada.");
 }
 
 function actualizarVistaUsuario() {
@@ -156,52 +323,101 @@ function actualizarVistaUsuario() {
   }
 }
 
-async function iniciarSesion(event) {
+async function enviarFormularioAuth(event) {
   event.preventDefault();
-  const username = document.getElementById("inputAuthUser").value.trim();
-  const password = document.getElementById("inputAuthPass").value.trim();
-
-  const res = await apiFetch("/api/auth/login", {
-    method: "POST",
-    body: JSON.stringify({ username, password }),
-  });
-
-  if (res.ok) {
-    guardarSesion(res.data.token, res.data.usuario);
-    mostrarToast(`¡Bienvenido de nuevo, ${res.data.usuario.nombre}!`);
-    await sincronizarDashboard();
-    navegar("dashboard");
+  if (authModoActual === "register") {
+    await registrarNuevoUsuario();
   } else {
-    mostrarToast(`Error: ${res.data.mensaje || "Credenciales incorrectas"}`, "error");
+    await iniciarSesion(event);
+  }
+}
+
+async function iniciarSesion(event) {
+  if (event) event.preventDefault();
+  if (operacionesEnCurso.has("login")) return;
+  const username = (document.getElementById("inputAuthUser")?.value || "").trim();
+  const password = (document.getElementById("inputAuthPass")?.value || "").trim();
+  if (!username || !password) {
+    mostrarErrorAuth("Ingresa tu nombre de usuario y contraseña.");
+    return;
+  }
+
+  operacionesEnCurso.add("login");
+  mostrarErrorAuth("");
+  const btn = document.getElementById("btnAuthSubmit");
+  if (btn) { btn.disabled = true; btn.textContent = "Ingresando..."; }
+
+  try {
+    const res = await apiFetch("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    });
+
+    if (res.ok) {
+      guardarSesion(res.data.token, res.data.usuario);
+      mostrarToast(`¡Bienvenido de nuevo, ${res.data.usuario.nombre}!`);
+      await cargarDispositivosSelect();
+      await sincronizarDashboard();
+      navegar("dashboard");
+    } else {
+      const msg = res.status === 401
+        ? "Usuario o contraseña incorrectos. Revisa tus datos e intenta de nuevo."
+        : traducirErrorAmigable(res, "inicio de sesión");
+      mostrarErrorAuth(msg);
+      mostrarToast(msg, "error");
+    }
+  } finally {
+    operacionesEnCurso.delete("login");
+    if (btn) { btn.disabled = false; btn.textContent = authModoActual === "register" ? "Crear Cuenta" : "Iniciar Sesión"; }
   }
 }
 
 async function registrarNuevoUsuario() {
-  const username = document.getElementById("inputAuthUser").value.trim();
-  const password = document.getElementById("inputAuthPass").value.trim();
+  if (operacionesEnCurso.has("register")) return;
+  const nombre = (document.getElementById("inputAuthNombre")?.value || "").trim();
+  const email = (document.getElementById("inputAuthEmail")?.value || "").trim();
+  const username = (document.getElementById("inputAuthUser")?.value || "").trim();
+  const password = (document.getElementById("inputAuthPass")?.value || "").trim();
 
   if (!username || !password) {
-    mostrarToast("Ingresa un usuario y contraseña para registrarte.", "warning");
+    mostrarErrorAuth("Ingresa un nombre de usuario y una contraseña para crear tu cuenta.");
+    return;
+  }
+  if (password.length < 6) {
+    mostrarErrorAuth("La contraseña debe tener al menos 6 caracteres.");
     return;
   }
 
-  const res = await apiFetch("/api/auth/register", {
-    method: "POST",
-    body: JSON.stringify({
-      username,
-      password,
-      nombre: username.toUpperCase(),
-      email: `${username}@ejemplo.com`,
-    }),
-  });
+  operacionesEnCurso.add("register");
+  mostrarErrorAuth("");
+  const btn = document.getElementById("btnAuthSubmit");
+  if (btn) { btn.disabled = true; btn.textContent = "Creando cuenta..."; }
 
-  if (res.ok) {
-    guardarSesion(res.data.token, res.data.usuario);
-    mostrarToast(`Cuenta creada para ${username}.`);
-    await sincronizarDashboard();
-    navegar("dashboard");
-  } else {
-    mostrarToast(`Error al registrar: ${res.data.mensaje}`, "error");
+  try {
+    const res = await apiFetch("/api/auth/register", {
+      method: "POST",
+      body: JSON.stringify({
+        username,
+        password,
+        nombre: nombre || username,
+        email: email || `${username}@ejemplo.com`,
+      }),
+    });
+
+    if (res.ok) {
+      guardarSesion(res.data.token, res.data.usuario);
+      mostrarToast(`Cuenta creada para ${username}. ¡Bienvenido a Plantol!`);
+      await cargarDispositivosSelect();
+      await sincronizarDashboard();
+      navegar("dashboard");
+    } else {
+      const msg = traducirErrorAmigable(res, "registro de usuario");
+      mostrarErrorAuth(msg);
+      mostrarToast(msg, "error");
+    }
+  } finally {
+    operacionesEnCurso.delete("register");
+    if (btn) { btn.disabled = false; btn.textContent = authModoActual === "register" ? "Crear Cuenta" : "Iniciar Sesión"; }
   }
 }
 
@@ -221,6 +437,10 @@ async function cargarFuenteConfig() {
   if (res.ok) {
     const fuente = res.data.fuente_referencia.toUpperCase();
     document.getElementById("sourceName").textContent = fuente;
+    const btnDemo = document.getElementById("btnModoDemo");
+    if (btnDemo) {
+      btnDemo.style.display = res.data.modo_demo ? "inline-flex" : "none";
+    }
   }
 }
 
@@ -241,6 +461,37 @@ async function cargarEspecies() {
   }
 }
 
+function formatearHaceTiempo(isoStr, segundos = null) {
+  let seg = typeof segundos === "number" && !Number.isNaN(segundos) ? Math.max(0, Math.floor(segundos)) : null;
+  if (seg === null && isoStr) {
+    const ms = Date.parse(isoStr);
+    if (!Number.isNaN(ms)) {
+      seg = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+    }
+  }
+  if (seg === null) return "Sin registro";
+  if (seg < 60) return `hace ${seg} s`;
+  const min = Math.floor(seg / 60);
+  if (min < 60) return `hace ${min} min`;
+  const hrs = Math.floor(min / 60);
+  if (hrs < 24) return `hace ${hrs} h`;
+  const dias = Math.floor(hrs / 24);
+  return `hace ${dias} d`;
+}
+
+function formatearFechaCorta(isoStr) {
+  if (!isoStr) return "N/D";
+  const d = new Date(isoStr);
+  if (Number.isNaN(d.getTime())) return isoStr;
+  return d.toLocaleString("es-CO", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
 async function cargarDispositivosSelect() {
   if (!authToken) return;
   const res = await apiFetch("/api/dispositivos/disponibles");
@@ -251,7 +502,8 @@ async function cargarDispositivosSelect() {
     res.data.forEach(d => {
       const opt = document.createElement("option");
       opt.value = d.id;
-      opt.textContent = `${d.id} · Wi-Fi (Disponible en Red)`;
+      const hace = formatearHaceTiempo(d.ultimo_contacto, d.segundos_sin_contacto);
+      opt.textContent = `${d.id} · Conectado (${hace})`;
       select.appendChild(opt);
     });
   }
@@ -276,7 +528,13 @@ async function sincronizarDashboard(notificar = false) {
 
   const res = await apiFetch("/api/dashboard");
   if (!res.ok) {
-    actualizarIndicadorConexion(false);
+    if (res.status === 401) {
+      cerrarSesion(true);
+      actualizarIndicadorConexion(false, "Tu sesión terminó");
+      mostrarToast(traducirErrorAmigable(res, "sincronización"), "warning");
+      return;
+    }
+    actualizarIndicadorConexion(false, "Conexión interrumpida");
     return;
   }
 
@@ -320,8 +578,8 @@ function renderizarAlertas(alertas) {
     return `
       <div class="alert-banner ${esCritico ? 'critical' : ''}">
         <div class="alert-content">
-          <strong>Alerta en ${a.planta} (${a.especie}): ${a.parametro} fuera de rango</strong>
-          <p>Valor detectado: ${a.valor} · Recomendación: ${a.recomendacion}</p>
+          <strong>Alerta en ${escapeHtml(a.planta)} (${escapeHtml(a.especie)}): ${escapeHtml(a.parametro)} fuera de rango</strong>
+          <p>Valor detectado: ${escapeHtml(a.valor)} · Recomendación: ${escapeHtml(a.recomendacion)}</p>
         </div>
       </div>
     `;
@@ -348,14 +606,57 @@ function renderizarPlantas(plantas) {
     const diag = p.diagnostico || {};
     const parametros = diag.parametros || [];
 
-    // Mapeo de estados de parámetros
+    const getParam = (nombre) => parametros.find(x => x.nombre.toLowerCase() === nombre.toLowerCase()) || null;
     const getClsParam = (nombre) => {
-      const match = parametros.find(x => x.nombre.toLowerCase() === nombre.toLowerCase());
+      const match = getParam(nombre);
       return match ? match.clasificacion.toLowerCase() : "optimo";
+    };
+
+    const etiquetaAmigableParam = (nombre, clasificacion) => {
+      const c = (clasificacion || "OPTIMO").toUpperCase();
+      if (nombre === "luminosidad") {
+        const nivelLum = diag?.resumen_luminico?.nivel;
+        if (nivelLum === "CRITICA_INSUFICIENTE") {
+          return diag?.resumen_luminico?.es_pico_momentaneo ? "Luz crítica (pico)" : "Luz crítica";
+        }
+        if (nivelLum === "BAJA_TOLERABLE") return "Luz baja tolerable";
+        if (nivelLum === "EXCESIVA") return "Luz excesiva";
+        if (nivelLum === "ADECUADA") return "Luz ideal";
+        return c === "BAJO" ? "Falta luz" : (c === "ALTO" ? "Mucha luz" : "Luz ideal");
+      }
+      if (nombre === "humedad_suelo") {
+        return c === "BAJO" ? "Tierra seca" : (c === "ALTO" ? "Mucha agua" : "Riego bien");
+      }
+      if (nombre === "temperatura") {
+        return c === "BAJO" ? "Hace frío" : (c === "ALTO" ? "Hace calor" : "Clima ideal");
+      }
+      return c;
     };
 
     const tieneLectura = lect.luminosidad !== undefined && lect.luminosidad !== null;
     const horaFormateada = lect.timestamp ? formatearFecha(lect.timestamp) : "Sin lecturas aún";
+    const edadSegundos = lect.timestamp ? (Date.now() - Date.parse(lect.timestamp)) / 1000 : null;
+    const datosDesactualizados = Boolean(p.dispositivo_id && edadSegundos !== null && !isNaN(edadSegundos) && edadSegundos > 120);
+
+    // Interpretación comprensible basada estrictamente en el diagnóstico del backend
+    let mensajeCuidado = "";
+    let claseCuidado = "neutral";
+    if (!tieneLectura) {
+      mensajeCuidado = p.dispositivo_id
+        ? "Tu matera está enlazada, pero aún no ha enviado mediciones. Espera unos segundos para conocer su estado."
+        : "Esta planta aún no tiene un sensor conectado. Conecta una matera en 'Vincular ESP32' para ver su estado real.";
+    } else if (estado === "SALUDABLE") {
+      claseCuidado = "ok";
+      mensajeCuidado = "Tu planta está en buenas condiciones. La luz, el riego y la temperatura están dentro de su rango ideal.";
+    } else {
+      claseCuidado = estado === "CRITICO" ? "danger" : "warn";
+      const recs = parametros
+        .filter(pr => pr.clasificacion && pr.clasificacion.toUpperCase() !== "OPTIMO" && pr.recomendacion)
+        .map(pr => escapeHtml(pr.recomendacion));
+      mensajeCuidado = recs.length > 0
+        ? recs.join(" · ")
+        : "Algunos valores están fuera del rango óptimo. Revisa los detalles para cuidarla mejor.";
+    }
 
     // Gamificación: HP y Emoción
     const hp = p.hp !== undefined ? p.hp : (diag.hp !== undefined ? diag.hp : 100);
@@ -370,21 +671,34 @@ function renderizarPlantas(plantas) {
       "DURMIENDO": "🌙 Durmiendo",
       "EN PELIGRO": "🥀 En Peligro"
     };
-    const emocionTexto = emocionIconos[emocion] || `🌱 ${emocion}`;
+    const emocionTexto = emocionIconos[emocion] || `🌱 ${escapeHtml(emocion)}`;
     const emocionClase = `emocion-${emocion.toLowerCase().replace(/\s+/g, "-")}`;
 
     const tieneSuelo = lect.humedad_suelo !== undefined && lect.humedad_suelo !== null;
+    const nombreEsc = escapeHtml(p.nombre);
+    const especieEsc = escapeHtml(p.especie);
+    const ubicacionEsc = escapeHtml(p.ubicacion || "Ubicación general");
+    const devEsc = escapeHtml(p.dispositivo_id || "");
+
+    const clsLuz = getClsParam('luminosidad');
+    const clsSuelo = getClsParam('humedad_suelo');
+    const clsTemp = getClsParam('temperatura');
 
     return `
       <div class="plant-card">
         <div class="plant-card-top">
           <div class="plant-title">
-            <h4>${p.nombre}</h4>
-            <span class="plant-species">${p.especie}</span>
-            <span class="plant-location">${p.ubicacion || "Ubicación general"}</span>
+            <h4>${nombreEsc}</h4>
+            <span class="plant-species">${especieEsc}</span>
+            <span class="plant-location">${ubicacionEsc}</span>
             <span class="badge-emocion ${emocionClase}" title="Estado Emocional">${emocionTexto}</span>
           </div>
-          <span class="badge ${badgeClase}">${estado.replace("_", " ")}</span>
+          <span class="badge ${badgeClase}">${escapeHtml(estado.replace("_", " "))}</span>
+        </div>
+
+        <!-- Interpretación clara para el usuario -->
+        <div class="care-guidance ${claseCuidado}">
+          ${mensajeCuidado}
         </div>
 
         <!-- Barra de Salud (HP) -->
@@ -403,39 +717,47 @@ function renderizarPlantas(plantas) {
             <span class="tel-label">Luz</span>
             <span class="tel-value">${tieneLectura ? Math.round(lect.luminosidad) : "--"}</span>
             <span class="tel-unit">lux</span>
-            ${tieneLectura ? `<span class="tel-status ${getClsParam('luminosidad')}">${getClsParam('luminosidad').toUpperCase()}</span>` : ''}
+            ${tieneLectura ? `<span class="tel-status ${clsLuz}">${escapeHtml(etiquetaAmigableParam('luminosidad', clsLuz))}</span>` : ''}
           </div>
           <div class="telemetry-item">
             <span class="tel-label">Suelo</span>
-            <span class="tel-value">${tieneSuelo ? lect.humedad_suelo.toFixed(0) : (tieneLectura ? "--" : "--")}</span>
+            <span class="tel-value">${tieneSuelo ? Number(lect.humedad_suelo).toFixed(0) : "--"}</span>
             <span class="tel-unit">%</span>
-            ${tieneSuelo ? `<span class="tel-status ${getClsParam('humedad_suelo')}">${getClsParam('humedad_suelo').toUpperCase()}</span>` : ''}
+            ${tieneSuelo ? `<span class="tel-status ${clsSuelo}">${escapeHtml(etiquetaAmigableParam('humedad_suelo', clsSuelo))}</span>` : ''}
           </div>
           <div class="telemetry-item">
             <span class="tel-label">Temp</span>
-            <span class="tel-value">${tieneLectura ? lect.temperatura.toFixed(1) : "--"}</span>
+            <span class="tel-value">${tieneLectura ? Number(lect.temperatura).toFixed(1) : "--"}</span>
             <span class="tel-unit">°C</span>
-            ${tieneLectura ? `<span class="tel-status ${getClsParam('temperatura')}">${getClsParam('temperatura').toUpperCase()}</span>` : ''}
+            ${tieneLectura ? `<span class="tel-status ${clsTemp}">${escapeHtml(etiquetaAmigableParam('temperatura', clsTemp))}</span>` : ''}
           </div>
         </div>
 
         <div class="plant-card-footer">
-          <span class="device-tag">
-            Sensor: ${p.dispositivo_id ? p.dispositivo_id : "Sin ESP32"}
-            ${p.dispositivo_id ? `<button type="button" class="btn-unlink-mini" title="Desvincular sensor" onclick="desvincularDispositivo(${p.id}, '${p.dispositivo_id}')">Desvincular</button>` : ''}
+          <span title="${datosDesactualizados ? 'Han pasado más de 2 minutos desde la última señal del sensor' : ''}">
+            Última lectura: ${horaFormateada}${p.dispositivo ? (p.dispositivo.en_linea ? ' · ● Sensor en línea' : ' · ○ Sensor desconectado') : ''}
           </span>
-          <span>${horaFormateada}</span>
         </div>
+
+        <details class="tech-details">
+          <summary>Detalles técnicos del sensor</summary>
+          <div class="tech-details-body">
+            <span>Dispositivo: <code>${p.dispositivo_id ? devEsc : "Sin ESP32"}</code>
+              ${p.dispositivo ? (p.dispositivo.en_linea ? '<span class="device-status-pill online">● Conectado</span>' : '<span class="device-status-pill offline">○ Desconectado</span>') : ''}
+            </span>
+            ${p.dispositivo_id ? `<button type="button" class="btn-unlink-mini" title="Desvincular sensor sin borrar su Wi-Fi" data-action="desvincular" data-id="${p.id}" data-dev="${devEsc}">Desvincular</button>` : ''}
+          </div>
+        </details>
 
         <div class="plant-card-actions">
           ${p.ya_saludado_hoy
             ? `<button class="btn btn-sm btn-saludo-done" disabled title="Ya saludaste a esta planta hoy">✓ Saludada hoy</button>`
-            : `<button class="btn btn-sm btn-saludo" onclick="saludarPlanta(${p.id})">👋 Saludar (+1 pt)</button>`
+            : `<button class="btn btn-sm btn-saludo" data-action="saludar" data-id="${p.id}">👋 Saludar</button>`
           }
-          <button class="btn btn-secondary btn-sm" onclick="abrirModalHistorial(${p.id}, '${p.nombre}')">
+          <button class="btn btn-secondary btn-sm" data-action="historial" data-id="${p.id}" data-nombre="${nombreEsc}">
             Historial
           </button>
-          <button class="btn btn-sm btn-outline-danger" title="Eliminar planta de la base de datos" onclick="eliminarPlanta(${p.id}, '${p.nombre}')">
+          <button class="btn btn-sm btn-outline-danger" title="Eliminar planta de la base de datos" data-action="eliminar" data-id="${p.id}" data-nombre="${nombreEsc}">
             Eliminar
           </button>
         </div>
@@ -444,15 +766,16 @@ function renderizarPlantas(plantas) {
   }).join("");
 }
 
-function actualizarIndicadorConexion(activo) {
+function actualizarIndicadorConexion(activo, detalle = null) {
   const dot = document.getElementById("liveDot");
   const text = document.getElementById("liveText");
+  if (!dot || !text) return;
   if (activo) {
     dot.className = "status-dot live";
-    text.textContent = "Sincronización activa (3.5s)";
+    text.textContent = detalle || "Sincronización activa (3.5s)";
   } else {
     dot.className = "status-dot offline";
-    text.textContent = "Conexión interrumpida";
+    text.textContent = detalle || "Conexión interrumpida";
   }
 }
 
@@ -460,23 +783,30 @@ function actualizarIndicadorConexion(activo) {
 // 6. Gestión de Plantas y Eliminación
 // ==========================================================================
 
-async function eliminarPlanta(plantaId, nombre) {
+async function eliminarPlanta(plantaId, nombre, btnEl = null) {
+  const clave = `eliminar-${plantaId}`;
+  if (operacionesEnCurso.has(clave)) return;
   if (!confirm(`¿Estás seguro de que deseas eliminar permanentemente la planta "${nombre}"?\n\n- Se eliminará su registro y lecturas de la base de datos.\n- Si tiene un sensor ESP32 vinculado, quedará desvinculado y libre en la red.`)) {
     return;
   }
 
-  const res = await apiFetch(`/api/plantas/${plantaId}`, {
-    method: "DELETE",
-  });
+  operacionesEnCurso.add(clave);
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = "Eliminando..."; }
 
-  if (res.ok) {
-    mostrarToast(`Planta "${nombre}" eliminada exitosamente.`);
-    await sincronizarDashboard();
-    await cargarDispositivosDisponibles();
-    await cargarDispositivosSelect();
-    await actualizarSelectPlantasVincular();
-  } else {
-    mostrarToast(`Error al eliminar planta: ${res.data.mensaje}`, "error");
+  try {
+    const res = await apiFetch(`/api/plantas/${plantaId}`, { method: "DELETE" });
+    if (res.ok) {
+      mostrarToast(`Planta "${nombre}" eliminada exitosamente.`);
+      await sincronizarDashboard();
+      await cargarDispositivosDisponibles();
+      await cargarDispositivosSelect();
+      await actualizarSelectPlantasVincular();
+    } else {
+      mostrarToast(traducirErrorAmigable(res, "eliminación de la planta"), "error");
+    }
+  } finally {
+    operacionesEnCurso.delete(clave);
+    if (btnEl) { btnEl.disabled = false; btnEl.textContent = "Eliminar"; }
   }
 }
 
@@ -486,29 +816,47 @@ async function eliminarPlanta(plantaId, nombre) {
 
 async function crearPlanta(event) {
   event.preventDefault();
-  const nombre = document.getElementById("inputNombrePlanta").value.trim();
-  const especie = document.getElementById("selectEspeciePlanta").value;
-  const ubicacion = document.getElementById("inputUbicacionPlanta").value.trim();
-  const dispositivo_id = document.getElementById("selectDispositivoPlanta").value || null;
+  if (operacionesEnCurso.has("crear-planta")) return;
+  operacionesEnCurso.add("crear-planta");
+  const btn = event.target?.querySelector('button[type="submit"]');
+  if (btn) { btn.disabled = true; btn.textContent = "Guardando..."; }
 
-  const res = await apiFetch("/api/plantas", {
-    method: "POST",
-    body: JSON.stringify({ nombre, especie, ubicacion, dispositivo_id }),
-  });
+  try {
+    const nombre = document.getElementById("inputNombrePlanta").value.trim();
+    const especie = document.getElementById("selectEspeciePlanta").value;
+    const ubicacion = document.getElementById("inputUbicacionPlanta").value.trim();
+    const dispositivo_id = document.getElementById("selectDispositivoPlanta").value || null;
 
-  if (res.ok) {
-    mostrarToast(`¡Planta '${nombre}' creada exitosamente!`);
-    document.getElementById("formNuevaPlanta").reset();
-    await sincronizarDashboard();
-    navegar("dashboard");
-  } else {
-    mostrarToast(`Error al crear planta: ${res.data.mensaje}`, "error");
+    const res = await apiFetch("/api/plantas", {
+      method: "POST",
+      body: JSON.stringify({ nombre, especie, ubicacion, dispositivo_id }),
+    });
+
+    if (res.ok) {
+      mostrarToast(`¡Planta '${nombre}' creada exitosamente!`);
+      document.getElementById("formNuevaPlanta").reset();
+      await sincronizarDashboard();
+      navegar("dashboard");
+    } else {
+      mostrarToast(traducirErrorAmigable(res, "creación de la planta"), "error");
+    }
+  } finally {
+    operacionesEnCurso.delete("crear-planta");
+    if (btn) { btn.disabled = false; btn.textContent = "Registrar Planta"; }
   }
 }
 
 async function actualizarSelectPlantasVincular() {
   if (!authToken) return;
-  const res = await apiFetch("/api/plantas");
+  const [res, resDev] = await Promise.all([
+    apiFetch("/api/plantas"),
+    apiFetch("/api/dispositivos"),
+  ]);
+  const devMap = new Map();
+  if (resDev.ok && Array.isArray(resDev.data)) {
+    resDev.data.forEach(d => devMap.set(String(d.id).toUpperCase(), d));
+  }
+
   if (res.ok) {
     const select = document.getElementById("selectPlantaVincular");
     if (select) {
@@ -527,40 +875,68 @@ async function actualizarSelectPlantasVincular() {
       if (vinculadas.length === 0) {
         listaVinculados.innerHTML = '<p class="text-muted text-sm">No tienes sensores vinculados a ninguna planta.</p>';
       } else {
-        listaVinculados.innerHTML = vinculadas.map(p => `
-          <div class="linked-device-item">
-            <div>
-              <strong>${p.nombre}</strong> <span class="text-muted">(${p.especie})</span>
-              <div class="text-muted text-sm">Sensor: <code>${p.dispositivo_id}</code></div>
+        listaVinculados.innerHTML = vinculadas.map(p => {
+          const nomEsc = escapeHtml(p.nombre);
+          const espEsc = escapeHtml(p.especie);
+          const devEsc = escapeHtml(p.dispositivo_id);
+          const devInfo = devMap.get(String(p.dispositivo_id).toUpperCase());
+          const enLinea = devInfo ? Boolean(devInfo.en_linea) : false;
+          const hace = devInfo ? formatearHaceTiempo(devInfo.ultimo_contacto, devInfo.segundos_sin_contacto) : "Sin registro";
+          const fechaExacta = devInfo ? formatearFechaCorta(devInfo.ultimo_contacto) : "N/D";
+          const pillHtml = enLinea
+            ? `<span class="device-status-pill online">● Conectado</span>`
+            : `<span class="device-status-pill offline">○ Dejó de responder</span>`;
+          const metaTexto = enLinea
+            ? `Última comunicación: ${escapeHtml(hace)} (${escapeHtml(fechaExacta)})`
+            : `Última comunicación: ${escapeHtml(hace)} (${escapeHtml(fechaExacta)})`;
+          return `
+            <div class="linked-device-item">
+              <div>
+                <div class="linked-device-header">
+                  <strong>${nomEsc}</strong> <span class="text-muted">(${espEsc})</span>
+                  ${pillHtml}
+                </div>
+                <div class="text-muted text-sm">Sensor: <code>${devEsc}</code> · <span class="device-meta-time">${metaTexto}</span></div>
+              </div>
+              <button type="button" class="btn btn-secondary btn-sm btn-danger-hover" data-action="desvincular" data-id="${p.id}" data-dev="${devEsc}">
+                Desvincular
+              </button>
             </div>
-            <button type="button" class="btn btn-secondary btn-sm btn-danger-hover" onclick="desvincularDispositivo(${p.id}, '${p.dispositivo_id}')">
-              Desvincular
-            </button>
-          </div>
-        `).join("");
+          `;
+        }).join("");
       }
     }
   }
 }
 
-async function desvincularDispositivo(plantaId, dispositivoId) {
-  if (!confirm(`¿Deseas desvincular el sensor ${dispositivoId || ''} de esta planta? El dispositivo volverá a estar disponible en la red.`)) {
+async function desvincularDispositivo(plantaId, dispositivoId, btnEl = null) {
+  const clave = `desvincular-${plantaId}`;
+  if (operacionesEnCurso.has(clave)) return;
+  if (!confirm(`¿Deseas desvincular el sensor ${dispositivoId || ''} de esta planta? El ESP32 conservará su registro y configuración Wi-Fi para vincularlo a otra planta sin repetir Bluetooth.`)) {
     return;
   }
 
-  const res = await apiFetch("/api/dispositivos/desvincular", {
-    method: "POST",
-    body: JSON.stringify({ planta_id: plantaId, dispositivo_id: dispositivoId }),
-  });
+  operacionesEnCurso.add(clave);
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = "Desvinculando..."; }
 
-  if (res.ok) {
-    mostrarToast(`Sensor ${dispositivoId || ''} desvinculado con éxito. Ahora está disponible en la red.`);
-    await sincronizarDashboard();
-    await cargarDispositivosDisponibles();
-    await cargarDispositivosSelect();
-    await actualizarSelectPlantasVincular();
-  } else {
-    mostrarToast(`Error al desvincular: ${res.data.mensaje}`, "error");
+  try {
+    const res = await apiFetch("/api/dispositivos/desvincular", {
+      method: "POST",
+      body: JSON.stringify({ planta_id: plantaId, dispositivo_id: dispositivoId }),
+    });
+
+    if (res.ok) {
+      mostrarToast(`Sensor ${dispositivoId || ''} desvinculado. Conserva su configuración y puedes asignarlo a otra planta sin Bluetooth.`);
+      await sincronizarDashboard();
+      await cargarDispositivosDisponibles();
+      await cargarDispositivosSelect();
+      await actualizarSelectPlantasVincular();
+    } else {
+      mostrarToast(traducirErrorAmigable(res, "desvinculación del sensor"), "error");
+    }
+  } finally {
+    operacionesEnCurso.delete(clave);
+    if (btnEl) { btnEl.disabled = false; btnEl.textContent = "Desvincular"; }
   }
 }
 
@@ -932,26 +1308,92 @@ async function esperarDispositivoEnRed(token, ssid, tInicioMs = 0) {
 
 async function cargarDispositivosDisponibles() {
   if (!authToken) return;
-  const res = await apiFetch("/api/dispositivos/disponibles");
+  const [resDisp, resTodos] = await Promise.all([
+    apiFetch("/api/dispositivos/disponibles"),
+    apiFetch("/api/dispositivos"),
+  ]);
   const select = document.getElementById("selectDispositivoDisponible");
   const countBadge = document.getElementById("countDispositivosDisponibles");
+  const box = document.getElementById("boxDispositivosEnRed");
 
   if (!select) return;
 
-  if (res.ok) {
-    const disponibles = res.data || [];
-    if (countBadge) countBadge.textContent = disponibles.length;
-    select.innerHTML = '<option value="">Selecciona un sensor disponible...</option>';
+  if (resDisp.ok) {
+    const activos = resDisp.data || [];
+    const activosIds = new Set(activos.map(d => String(d.id).toUpperCase()));
+    const registradosLibres = (resTodos.ok && Array.isArray(resTodos.data))
+      ? resTodos.data.filter(d => (!d.planta_id || d.planta_id === 0) && !activosIds.has(String(d.id).toUpperCase()))
+      : [];
 
-    if (disponibles.length === 0) {
-      select.innerHTML = '<option value="">No hay sensores disponibles en red (aprovisiona uno por Bluetooth)</option>';
+    if (countBadge) countBadge.textContent = activos.length;
+    select.innerHTML = '<option value="">Selecciona un sensor...</option>';
+
+    if (activos.length === 0 && registradosLibres.length === 0) {
+      select.innerHTML = '<option value="">No hay sensores libres registrados (aprovisiona uno por Bluetooth)</option>';
     } else {
-      disponibles.forEach(d => {
+      activos.forEach(d => {
         const opt = document.createElement("option");
         opt.value = d.id;
-        opt.textContent = `${d.id} · MAC: ${d.mac || "Wi-Fi"} (Disponible en red)`;
+        const hace = formatearHaceTiempo(d.ultimo_contacto, d.segundos_sin_contacto);
+        opt.textContent = `${d.id} · MAC: ${d.mac || "Wi-Fi"} · Conectado (${hace})`;
         select.appendChild(opt);
       });
+      registradosLibres.forEach(d => {
+        const opt = document.createElement("option");
+        opt.value = d.id;
+        const hace = formatearHaceTiempo(d.ultimo_contacto, d.segundos_sin_contacto);
+        opt.textContent = `${d.id} · Registrado sin planta (${hace}, sin señal actual — listo para re-vincular)`;
+        select.appendChild(opt);
+      });
+    }
+
+    if (box) {
+      let listaEl = document.getElementById("listaDispositivosDisponiblesDetalle");
+      if (!listaEl) {
+        listaEl = document.createElement("div");
+        listaEl.id = "listaDispositivosDisponiblesDetalle";
+        listaEl.className = "available-devices-list";
+        box.appendChild(listaEl);
+      }
+      if (activos.length === 0 && registradosLibres.length === 0) {
+        listaEl.innerHTML = '<p class="text-muted text-sm" style="margin:8px 0 0;">No hay dispositivos ESP32 libres reportándose en los últimos 120 segundos.</p>';
+      } else {
+        const htmlActivos = activos.map(d => {
+          const idEsc = escapeHtml(d.id);
+          const macEsc = escapeHtml(d.mac || "Wi-Fi");
+          const hace = escapeHtml(formatearHaceTiempo(d.ultimo_contacto, d.segundos_sin_contacto));
+          const fecha = escapeHtml(formatearFechaCorta(d.ultimo_contacto));
+          return `
+            <div class="available-device-row">
+              <div>
+                <strong><code>${idEsc}</code></strong>
+                <span class="text-muted text-sm">· MAC: ${macEsc}</span>
+              </div>
+              <div class="available-device-meta">
+                <span class="device-status-pill online">● Conectado</span>
+                <span class="text-muted text-sm">Última comunicación: ${hace} (${fecha})</span>
+              </div>
+            </div>
+          `;
+        }).join("");
+        const htmlLibres = registradosLibres.map(d => {
+          const idEsc = escapeHtml(d.id);
+          const hace = escapeHtml(formatearHaceTiempo(d.ultimo_contacto, d.segundos_sin_contacto));
+          return `
+            <div class="available-device-row">
+              <div>
+                <strong><code>${idEsc}</code></strong>
+                <span class="text-muted text-sm">· Registrado sin planta asignada</span>
+              </div>
+              <div class="available-device-meta">
+                <span class="device-status-pill offline">○ Sin señal reciente</span>
+                <span class="text-muted text-sm">Última comunicación: ${hace} · Listo para re-vincular sin Bluetooth</span>
+              </div>
+            </div>
+          `;
+        }).join("");
+        listaEl.innerHTML = htmlActivos + htmlLibres;
+      }
     }
   }
 }
@@ -1028,13 +1470,14 @@ async function abrirModalHistorial(plantaId, nombrePlanta) {
   tbody.innerHTML = historial.map(item => {
     const estado = item.estado_global || "SIN_DATOS";
     const badgeClase = `badge-${estado.toLowerCase().replace("_", "-")}`;
+    const valorSuelo = (item.humedad_suelo !== undefined && item.humedad_suelo !== null) ? item.humedad_suelo : item.humedad;
     return `
       <tr>
-        <td>${formatearFecha(item.timestamp)}</td>
-        <td><strong>${Math.round(item.luminosidad)}</strong> lux</td>
-        <td><strong>${item.humedad.toFixed(1)}</strong>%</td>
-        <td><strong>${item.temperatura.toFixed(1)}</strong>°C</td>
-        <td><span class="badge ${badgeClase}">${estado.replace("_", " ")}</span></td>
+        <td>${escapeHtml(formatearFecha(item.timestamp))}</td>
+        <td><strong>${Math.round(Number(item.luminosidad || 0))}</strong> lux</td>
+        <td><strong>${valorSuelo !== undefined && valorSuelo !== null ? Number(valorSuelo).toFixed(0) : "--"}</strong>%</td>
+        <td><strong>${Number(item.temperatura || 0).toFixed(1)}</strong>°C</td>
+        <td><span class="badge ${badgeClase}">${escapeHtml(estado.replace("_", " "))}</span></td>
       </tr>
     `;
   }).join("");
@@ -1067,7 +1510,7 @@ function mostrarToast(mensaje, tipo = "normal") {
   const container = document.getElementById("toastContainer");
   const toast = document.createElement("div");
   toast.className = `toast ${tipo === 'error' ? 'toast-error' : (tipo === 'warning' ? 'toast-warning' : '')}`;
-  toast.innerHTML = `<span class="toast-indicator">${tipo === 'error' ? '[!]' : '[OK]'}</span> <span>${mensaje}</span>`;
+  toast.innerHTML = `<span class="toast-indicator">${tipo === 'error' ? '[!]' : '[OK]'}</span> <span>${escapeHtml(mensaje)}</span>`;
   container.appendChild(toast);
 
   setTimeout(() => {
@@ -1082,25 +1525,34 @@ function mostrarToast(mensaje, tipo = "normal") {
 // 10. Gamificación: Saludo Diario y Modal de Puntos
 // ==========================================================================
 
-async function saludarPlanta(plantaId) {
+async function saludarPlanta(plantaId, btnEl = null) {
   if (!authToken) {
     mostrarToast("Debes iniciar sesión para saludar a tus plantas.", "warning");
     return;
   }
+  const clave = `saludar-${plantaId}`;
+  if (operacionesEnCurso.has(clave)) return;
+  operacionesEnCurso.add(clave);
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = "Saludando..."; }
 
-  const res = await apiFetch(`/api/plantas/${plantaId}/saludar`, {
-    method: "POST"
-  });
+  try {
+    const res = await apiFetch(`/api/plantas/${plantaId}/saludar`, {
+      method: "POST"
+    });
 
-  if (res.ok) {
-    mostrarToast(res.data.mensaje || "¡Has saludado a tu planta! Ganaste +1 punto de cuidado.");
-    if (res.data.saldo_actual !== undefined) {
-      const elPts = document.getElementById("topbarPuntosVal");
-      if (elPts) elPts.textContent = res.data.saldo_actual;
+    if (res.ok) {
+      mostrarToast(res.data.mensaje || "¡Has saludado a tu planta! Ganaste +1 punto de cuidado.");
+      if (res.data.saldo_actual !== undefined) {
+        const elPts = document.getElementById("topbarPuntosVal");
+        if (elPts) elPts.textContent = res.data.saldo_actual;
+      }
+      await sincronizarDashboard(false);
+    } else {
+      mostrarToast(traducirErrorAmigable(res, "saludo diario"), "warning");
     }
-    await sincronizarDashboard(false);
-  } else {
-    mostrarToast(res.data.mensaje || "No se pudo saludar a la planta.", "warning");
+  } finally {
+    operacionesEnCurso.delete(clave);
+    if (btnEl && btnEl.isConnected) { btnEl.disabled = false; }
   }
 }
 
@@ -1130,11 +1582,11 @@ async function mostrarModalPuntos() {
       const esPos = t.cantidad > 0;
       return `
         <tr>
-          <td>${formatearFecha(t.fecha)}</td>
+          <td>${escapeHtml(formatearFecha(t.fecha))}</td>
           <td>
-            <strong>${t.evento}</strong>
+            <strong>${escapeHtml(t.evento)}</strong>
             <br>
-            <small class="text-muted">${t.motivo}</small>
+            <small class="text-muted">${escapeHtml(t.motivo)}</small>
           </td>
           <td>
             <span class="puntos-badge-delta ${esPos ? 'pos' : 'neg'}">

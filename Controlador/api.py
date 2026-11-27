@@ -18,11 +18,20 @@ from flask import Blueprint, jsonify, request
 
 from Modelo.entidades import (
     AccesoDenegadoPlantaError,
+    DispositivoNoAutorizadoError,
+    DispositivoNoEncontradoError,
     DispositivoNoVinculadoError,
     EspecieNoSoportadaError,
     LecturaInvalidaError,
     PlantaNoEncontradaError,
     SaludoYaRealizadoHoyError,
+)
+from Modelo.gamificacion_avanzada import (
+    NivelInsuficienteError,
+    ObjetoNoEncontradoError,
+    ObjetoNoPoseidoError,
+    ObjetoYaPoseidoError,
+    SaldoInsuficienteError,
 )
 from Modelo.puertos import (
     AutenticacionPort,
@@ -65,6 +74,7 @@ def crear_blueprint_api(
     emisor_token: EmisorTokenPort,
     tipo_fuente_actual: str = "csv",
     caso_gamificacion: Optional[GamificacionPort] = None,
+    caso_gamificacion_avanzada=None,
 ) -> Blueprint:
     """Crea y configura el Blueprint unificado de la API REST."""
     bp = Blueprint("api", __name__, url_prefix="/api")
@@ -255,10 +265,39 @@ def crear_blueprint_api(
 
     @bp.route("/config/fuente", methods=["GET"])
     def fuente_actual():
+        modo_demo = os.environ.get("PLANTOL_DEMO", "0").strip() == "1"
         return jsonify({
             "fuente_referencia": tipo_fuente_actual,
             "descripcion": f"Tabla de referencia provista mediante {tipo_fuente_actual.upper()}",
+            "modo_demo": modo_demo,
         })
+
+    @bp.route("/auth/demo", methods=["POST"])
+    def login_demo():
+        """Acceso opcional de demostración, habilitado exclusivamente si PLANTOL_DEMO=1."""
+        if os.environ.get("PLANTOL_DEMO", "0").strip() != "1":
+            return jsonify({
+                "error": "MODO_DEMO_DESHABILITADO",
+                "mensaje": "El modo demo está deshabilitado en este entorno.",
+            }), 403
+        try:
+            usuario, token = caso_autenticacion.iniciar_sesion(username="felipe", password=os.environ.get("PLANTOL_DEMO_PASS", "plantol123"))
+            return jsonify({
+                "mensaje": "Sesión demo iniciada",
+                "token": token,
+                "usuario": {
+                    "id": usuario.id,
+                    "username": usuario.username,
+                    "nombre": usuario.nombre,
+                    "email": usuario.email,
+                    "rol": usuario.rol,
+                },
+            })
+        except ValueError:
+            return jsonify({
+                "error": "DEMO_NO_DISPONIBLE",
+                "mensaje": "La cuenta de demostración no se encuentra disponible.",
+            }), 404
 
     # =====================================================================
     # Dashboard y Gestión de Plantas Asíncrono (R6, R7)
@@ -308,6 +347,12 @@ def crear_blueprint_api(
             }), 201
         except EspecieNoSoportadaError as exc:
             return jsonify({"error": "ESPECIE_NO_SOPORTADA", "mensaje": str(exc)}), 400
+        except DispositivoNoEncontradoError as exc:
+            return jsonify({"error": "DISPOSITIVO_NO_ENCONTRADO", "mensaje": str(exc)}), 404
+        except DispositivoNoAutorizadoError as exc:
+            return jsonify({"error": "DISPOSITIVO_NO_AUTORIZADO", "mensaje": str(exc)}), 403
+        except ValueError as exc:
+            return jsonify({"error": "DISPOSITIVO_YA_VINCULADO", "mensaje": str(exc)}), 409
 
     @bp.route("/plantas/<int:planta_id>", methods=["GET"])
     @requiere_jwt_usuario
@@ -357,18 +402,26 @@ def crear_blueprint_api(
     @bp.route("/dispositivos", methods=["GET"])
     @requiere_jwt_usuario
     def listar_dispositivos(usuario_id: int):
-        dispositivos = repo_dispositivos.listar_dispositivos()
-        return jsonify([
-            {
+        from Controlador.persistencia import evaluar_actividad_dispositivo
+        ventana_seg = getattr(repo_dispositivos, "ventana_actividad_seg", 120)
+        dispositivos = repo_dispositivos.listar_dispositivos(usuario_id=usuario_id)
+        resultado = []
+        for d in dispositivos:
+            act = evaluar_actividad_dispositivo(d.ultimo_contacto, d.estado_conexion, ventana_seg)
+            resultado.append({
                 "id": d.id,
                 "mac": d.mac,
                 "planta_id": d.planta_id,
-                "disponible": d.planta_id is None or d.planta_id == 0,
+                "usuario_id": d.usuario_id,
+                "disponible": (d.planta_id is None or d.planta_id == 0) and act["en_linea"],
                 "ultimo_contacto": d.ultimo_contacto,
-                "estado_conexion": d.estado_conexion,
-            }
-            for d in dispositivos
-        ])
+                "estado_conexion": act["estado_efectivo"],
+                "estado_registrado": d.estado_conexion,
+                "en_linea": act["en_linea"],
+                "segundos_sin_contacto": act["segundos_sin_contacto"],
+                "ventana_actividad_seg": ventana_seg,
+            })
+        return jsonify(resultado)
 
     # =====================================================================
     # Rutas de Información del Servidor y Aprovisionamiento
@@ -415,7 +468,7 @@ def crear_blueprint_api(
         if not mac:
             return jsonify({"error": "MAC_REQUERIDA", "mensaje": "Se requiere el parámetro 'mac'"}), 400
 
-        if not token or not repo_dispositivos.validar_y_consumir_token_pairing(token):
+        if not token:
             return (
                 jsonify({
                     "error": "TOKEN_PAIRING_INVALIDO",
@@ -424,32 +477,63 @@ def crear_blueprint_api(
                 401,
             )
 
+        propietario_id = repo_dispositivos.consumir_token_pairing_con_usuario(token)
+        if propietario_id is None:
+            return (
+                jsonify({
+                    "error": "TOKEN_PAIRING_INVALIDO",
+                    "mensaje": "Se requiere un token de emparejamiento válido emitido por la sesión del usuario.",
+                }),
+                401,
+            )
+
+        existente = repo_dispositivos.buscar_por_id(mac)
+        if existente and existente.usuario_id is not None and int(existente.usuario_id) != int(propietario_id):
+            return (
+                jsonify({
+                    "error": "DISPOSITIVO_NO_AUTORIZADO",
+                    "mensaje": f"El dispositivo {mac} ya pertenece a otra cuenta.",
+                }),
+                403,
+            )
+
         dev = repo_dispositivos.registrar_o_conectar_dispositivo(
-            dispositivo_id=mac, mac=mac, liberar_planta=True
+            dispositivo_id=mac, mac=mac, liberar_planta=True, usuario_id=propietario_id
         )
+        token_jwt = emisor_token.emitir_token_dispositivo(dev.id)
         return jsonify({
             "success": True,
             "mensaje": f"Dispositivo {mac} registrado y en línea exitosamente.",
             "dispositivo_id": dev.id,
             "mac": dev.mac,
+            "usuario_id": dev.usuario_id,
+            "token": token_jwt,
+            "scope": "dispositivo",
         }), 200
 
     @bp.route("/dispositivos/disponibles", methods=["GET"])
     @requiere_jwt_usuario
     def listar_dispositivos_disponibles(usuario_id: int):
         """
-        Retorna los dispositivos ESP32 presentes en la red y listos para agregar o vincular a una planta.
+        Retorna únicamente los dispositivos ESP32 del usuario autenticado presentes en la red
+        con actividad real y reciente, listos para agregar o vincular a una planta.
         """
-        disponibles = repo_dispositivos.listar_dispositivos_disponibles()
-        return jsonify([
-            {
+        from Controlador.persistencia import evaluar_actividad_dispositivo
+        ventana_seg = getattr(repo_dispositivos, "ventana_actividad_seg", 120)
+        disponibles = repo_dispositivos.listar_dispositivos_disponibles(usuario_id=usuario_id)
+        resultado = []
+        for d in disponibles:
+            act = evaluar_actividad_dispositivo(d.ultimo_contacto, d.estado_conexion, ventana_seg)
+            resultado.append({
                 "id": d.id,
                 "mac": d.mac,
-                "estado_conexion": d.estado_conexion,
+                "estado_conexion": act["estado_efectivo"],
                 "ultimo_contacto": d.ultimo_contacto,
-            }
-            for d in disponibles
-        ])
+                "en_linea": act["en_linea"],
+                "segundos_sin_contacto": act["segundos_sin_contacto"],
+                "ventana_actividad_seg": ventana_seg,
+            })
+        return jsonify(resultado)
 
     @bp.route("/dispositivos/codigo", methods=["POST"])
     @requiere_jwt_usuario
@@ -497,8 +581,14 @@ def crear_blueprint_api(
             })
         except AccesoDenegadoPlantaError as exc:
             return jsonify({"error": "ACCESO_DENEGADO", "mensaje": str(exc)}), 403
+        except DispositivoNoAutorizadoError as exc:
+            return jsonify({"error": "DISPOSITIVO_NO_AUTORIZADO", "mensaje": str(exc)}), 403
         except PlantaNoEncontradaError as exc:
             return jsonify({"error": "PLANTA_NO_ENCONTRADA", "mensaje": str(exc)}), 404
+        except DispositivoNoEncontradoError as exc:
+            return jsonify({"error": "DISPOSITIVO_NO_ENCONTRADO", "mensaje": str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({"error": "DISPOSITIVO_YA_VINCULADO", "mensaje": str(exc)}), 409
 
     @bp.route("/dispositivos/desvincular", methods=["POST"])
     @requiere_jwt_usuario
@@ -531,14 +621,23 @@ def crear_blueprint_api(
             })
         except AccesoDenegadoPlantaError as exc:
             return jsonify({"error": "ACCESO_DENEGADO", "mensaje": str(exc)}), 403
+        except DispositivoNoAutorizadoError as exc:
+            return jsonify({"error": "DISPOSITIVO_NO_AUTORIZADO", "mensaje": str(exc)}), 403
         except PlantaNoEncontradaError as exc:
             return jsonify({"error": "PLANTA_NO_ENCONTRADA", "mensaje": str(exc)}), 404
+        except DispositivoNoEncontradoError as exc:
+            return jsonify({"error": "DISPOSITIVO_NO_ENCONTRADO", "mensaje": str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({"error": "DISPOSITIVO_YA_VINCULADO", "mensaje": str(exc)}), 409
 
-    @bp.route("/dispositivos/<dispositivo_id>/token", methods=["POST", "GET"])
+    @bp.route("/dispositivos/<dispositivo_id>/token", methods=["POST"])
     def obtener_token_dispositivo(dispositivo_id: str):
         """
-        Emite el token JWT para un ESP32 o simulador.
+        Emite el token JWT para un ESP32 o simulador registrado.
         Alcance restringido exclusivamente a 'dispositivo'.
+        Nota de seguridad (Fase 1): Se eliminó GET para evitar emisión por URL;
+        mantener POST por compatibilidad con el firmware ya flasheado hasta
+        aprobar actualización de firmware que lea el JWT desde /reclamar.
         """
         dev = repo_dispositivos.buscar_por_id(dispositivo_id)
         if not dev:
@@ -671,8 +770,14 @@ def crear_blueprint_api(
             return jsonify({"error": "SALUDO_YA_REALIZADO", "mensaje": str(exc)}), 400
         except AccesoDenegadoPlantaError as exc:
             return jsonify({"error": "ACCESO_DENEGADO", "mensaje": str(exc)}), 403
+        except DispositivoNoAutorizadoError as exc:
+            return jsonify({"error": "DISPOSITIVO_NO_AUTORIZADO", "mensaje": str(exc)}), 403
         except PlantaNoEncontradaError as exc:
             return jsonify({"error": "PLANTA_NO_ENCONTRADA", "mensaje": str(exc)}), 404
+        except DispositivoNoEncontradoError as exc:
+            return jsonify({"error": "DISPOSITIVO_NO_ENCONTRADO", "mensaje": str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({"error": "DISPOSITIVO_YA_VINCULADO", "mensaje": str(exc)}), 409
 
     @bp.route("/gamificacion/puntos", methods=["GET"])
     @requiere_jwt_usuario
@@ -698,6 +803,56 @@ def crear_blueprint_api(
             "saldo_puntos": saldo,
             "historial": historial,
         }), 200
+
+    # =====================================================================
+    # Rutas de Gamificación Avanzada (Progresión, Misiones, Logros, Tienda, Habitación)
+    # =====================================================================
+
+    @bp.route("/gamificacion/resumen", methods=["GET"])
+    @requiere_jwt_usuario
+    def resumen_gamificacion_avanzada(usuario_id: int):
+        if not caso_gamificacion_avanzada:
+            return jsonify({"error": "MODULO_NO_DISPONIBLE", "mensaje": "Gamificación avanzada no inicializada."}), 503
+        resumen = caso_gamificacion_avanzada.sincronizar_progreso_usuario(usuario_id)
+        return jsonify(resumen), 200
+
+    @bp.route("/gamificacion/tienda/comprar", methods=["POST"])
+    @requiere_jwt_usuario
+    def comprar_articulo_tienda(usuario_id: int):
+        if not caso_gamificacion_avanzada:
+            return jsonify({"error": "MODULO_NO_DISPONIBLE", "mensaje": "Tienda no disponible."}), 503
+        payload = request.get_json(silent=True) or {}
+        objeto_id = str(payload.get("objeto_id", "")).strip()
+        if not objeto_id:
+            return jsonify({"error": "DATOS_INCOMPLETOS", "mensaje": "Se requiere 'objeto_id'."}), 400
+        try:
+            res = caso_gamificacion_avanzada.comprar_articulo(usuario_id=usuario_id, objeto_id=objeto_id)
+            return jsonify(res), 200
+        except ObjetoNoEncontradoError as exc:
+            return jsonify({"error": "OBJETO_NO_ENCONTRADO", "mensaje": str(exc)}), 404
+        except ObjetoYaPoseidoError as exc:
+            return jsonify({"error": "OBJETO_YA_POSEIDO", "mensaje": str(exc)}), 409
+        except NivelInsuficienteError as exc:
+            return jsonify({"error": "NIVEL_INSUFICIENTE", "mensaje": str(exc)}), 403
+        except SaldoInsuficienteError as exc:
+            return jsonify({"error": "SALDO_INSUFICIENTE", "mensaje": str(exc)}), 400
+
+    @bp.route("/gamificacion/habitacion", methods=["PUT"])
+    @requiere_jwt_usuario
+    def actualizar_habitacion_virtual(usuario_id: int):
+        if not caso_gamificacion_avanzada:
+            return jsonify({"error": "MODULO_NO_DISPONIBLE", "mensaje": "Habitación virtual no disponible."}), 503
+        payload = request.get_json(silent=True) or {}
+        slots = payload.get("slots")
+        if not isinstance(slots, dict):
+            return jsonify({"error": "DATOS_INCOMPLETOS", "mensaje": "Se requiere el objeto 'slots'."}), 400
+        try:
+            res = caso_gamificacion_avanzada.actualizar_habitacion(usuario_id=usuario_id, slots_solicitados=slots)
+            return jsonify(res), 200
+        except ObjetoNoPoseidoError as exc:
+            return jsonify({"error": "OBJETO_NO_POSEIDO", "mensaje": str(exc)}), 403
+        except ObjetoNoEncontradoError as exc:
+            return jsonify({"error": "OBJETO_INVALIDO", "mensaje": str(exc)}), 400
 
     return bp
 

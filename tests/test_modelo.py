@@ -431,8 +431,59 @@ class TestCasoUsoGestionPlantas(unittest.TestCase):
             self.caso.eliminar_planta(usuario_id=2, planta_id=self.planta.id)
 
     def test_eliminar_planta_inexistente(self):
-        with self.assertRaises(PlantaNoEncontradaError):
-            self.caso.eliminar_planta(usuario_id=1, planta_id=999)
+        self.assertRaises(PlantaNoEncontradaError, self.caso.eliminar_planta, usuario_id=1, planta_id=999)
+
+
+class TestDiagnosticoLuminicoContextual(unittest.TestCase):
+    """Pruebas del Objetivo A: 4 niveles de iluminación, especies y protección ante picos momentáneos."""
+
+    def setUp(self):
+        self.val = ValidadorDeEstado()
+        self.orquidea = RangosEspecie("Orquídea (Orchidaceae)", 1000.0, 3000.0, 50.0, 70.0, 18.0, 28.0)
+        self.cactus = RangosEspecie("Cactus (Cactaceae)", 5000.0, 15000.0, 10.0, 30.0, 18.0, 35.0)
+
+    def test_cuatro_niveles_iluminacion_y_especies(self):
+        # Crítica insuficiente (< 30% de 1000 = 300 lux)
+        d_crit = self.val.evaluar("Orquídea (Orchidaceae)", self.orquidea, 50.0, 60.0, 22.0)
+        self.assertEqual(d_crit.resumen_luminico["nivel"], "CRITICA_INSUFICIENTE")
+        self.assertEqual(d_crit.estado_global, EN_RIESGO)
+        self.assertEqual(d_crit.hp, 50)
+
+        # Baja pero tolerable (500 lux para Orquídea 1000-3000) -> 75 HP
+        d_tol = self.val.evaluar("Orquídea (Orchidaceae)", self.orquidea, 500.0, 60.0, 22.0)
+        self.assertEqual(d_tol.resumen_luminico["nivel"], "BAJA_TOLERABLE")
+        self.assertEqual(d_tol.hp, 75)
+
+        # Para Cactus (min 5000), esos mismos 500 lux son CRITICA_INSUFICIENTE
+        d_cac = self.val.evaluar("Cactus (Cactaceae)", self.cactus, 500.0, 20.0, 24.0)
+        self.assertEqual(d_cac.resumen_luminico["nivel"], "CRITICA_INSUFICIENTE")
+        self.assertEqual(d_cac.hp, 50)
+
+        # Adecuada y Excesiva
+        d_ok = self.val.evaluar("Orquídea (Orchidaceae)", self.orquidea, 1800.0, 60.0, 22.0)
+        self.assertEqual(d_ok.resumen_luminico["nivel"], "ADECUADA")
+        self.assertEqual(d_ok.estado_global, SALUDABLE)
+        self.assertEqual(d_ok.hp, 100)
+
+        d_exc = self.val.evaluar("Orquídea (Orchidaceae)", self.orquidea, 6500.0, 60.0, 22.0)
+        self.assertEqual(d_exc.resumen_luminico["nivel"], "EXCESIVA")
+        self.assertEqual(d_exc.estado_global, EN_RIESGO)
+
+    def test_pico_momentaneo_no_declara_saludable_tras_oscuridad_cronica(self):
+        # Historial reciente en oscuridad (5 lecturas de 20 lux)
+        hist_oscuro = [20.0, 22.0, 18.0, 25.0, 19.0]
+        # 1 lectura puntual alta (linterna 8000 lux) -> NO debe marcar SALUDABLE
+        d_pico = self.val.evaluar("Cactus (Cactaceae)", self.cactus, 8000.0, 20.0, 24.0, historial_lux=hist_oscuro)
+        self.assertTrue(d_pico.resumen_luminico["es_pico_momentaneo"])
+        self.assertEqual(d_pico.resumen_luminico["lux_actual"], 8000.0)
+        self.assertNotEqual(d_pico.estado_global, SALUDABLE)
+
+        # Lectura sostenida (>= 2 previas óptimas + actual = 3 consecutivas) -> sí marca ADECUADA / SALUDABLE
+        hist_sostenido = [7500.0, 7800.0, 20.0, 20.0, 20.0]
+        d_sost = self.val.evaluar("Cactus (Cactaceae)", self.cactus, 8000.0, 20.0, 24.0, historial_lux=hist_sostenido)
+        self.assertFalse(d_sost.resumen_luminico["es_pico_momentaneo"])
+        self.assertEqual(d_sost.resumen_luminico["nivel"], "ADECUADA")
+        self.assertEqual(d_sost.estado_global, SALUDABLE)
 
 
 if __name__ == "__main__":

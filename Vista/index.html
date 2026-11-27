@@ -11,7 +11,82 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div class="app-container">
+  <!-- PANTALLA INDEPENDIENTE DE AUTENTICACIÓN (Usuario sin sesión) -->
+  <section id="authScreen" class="auth-screen" style="display: none;" aria-label="Acceso a Plantol">
+    <div class="auth-shell">
+      <div class="auth-brand-panel">
+        <div class="auth-brand-badge">
+          <div class="logo-mark">P</div>
+          <div>
+            <h1>Plantol</h1>
+            <span>Invernadero Inteligente</span>
+          </div>
+        </div>
+        <div class="auth-illustration" aria-hidden="true">
+          <svg viewBox="0 0 220 180" class="auth-botanical-svg">
+            <circle cx="110" cy="90" r="76" fill="rgba(255,255,255,0.14)"/>
+            <path d="M110 112C108 82 90 60 76 48" stroke="#bbf7d0" stroke-width="5" stroke-linecap="round" fill="none"/>
+            <path d="M110 112C112 78 132 54 146 44" stroke="#dcfce7" stroke-width="5" stroke-linecap="round" fill="none"/>
+            <path d="M110 112V36" stroke="#86efac" stroke-width="5" stroke-linecap="round" fill="none"/>
+            <ellipse cx="78" cy="60" rx="22" ry="13" transform="rotate(-32 78 60)" fill="#86efac"/>
+            <ellipse cx="144" cy="56" rx="22" ry="13" transform="rotate(32 144 56)" fill="#4ade80"/>
+            <ellipse cx="110" cy="38" rx="16" ry="24" fill="#bbf7d0"/>
+            <path d="M74 110h72l-9 44H83z" fill="#e07a5f"/>
+            <rect x="68" y="102" width="84" height="11" rx="5" fill="#f29b7e"/>
+          </svg>
+        </div>
+        <div class="auth-brand-copy">
+          <h2>Cuida tus plantas reales con datos claros</h2>
+          <p>Monitorea luz, humedad y temperatura desde tu ESP32, recibe recomendaciones comprensibles y personaliza tu rincón botánico.</p>
+        </div>
+      </div>
+
+      <div class="auth-form-panel">
+        <div class="auth-mode-tabs" role="tablist" aria-label="Modo de acceso">
+          <button type="button" id="tabAuthLogin" class="auth-mode-tab active" onclick="cambiarModoAuth('login')">Iniciar Sesión</button>
+          <button type="button" id="tabAuthRegister" class="auth-mode-tab" onclick="cambiarModoAuth('register')">Crear Cuenta</button>
+        </div>
+
+        <h3 id="authFormTitle">Bienvenido de nuevo</h3>
+        <p class="text-muted text-sm" id="authFormSubtitle">Ingresa con tu cuenta para ver tus plantas y dispositivos.</p>
+
+        <div id="authErrorBox" class="auth-error-box" style="display: none;" role="alert"></div>
+
+        <form id="formAuthScreen" onsubmit="enviarFormularioAuth(event)" novalidate>
+          <div class="form-group" id="groupAuthNombre" style="display: none;">
+            <label for="inputAuthNombre">Nombre completo</label>
+            <input type="text" id="inputAuthNombre" placeholder="Ej: Sofía Ramírez" autocomplete="name">
+          </div>
+
+          <div class="form-group" id="groupAuthEmail" style="display: none;">
+            <label for="inputAuthEmail">Correo electrónico (opcional)</label>
+            <input type="email" id="inputAuthEmail" placeholder="sofia@ejemplo.com" autocomplete="email">
+          </div>
+
+          <div class="form-group">
+            <label for="inputAuthUser">Nombre de usuario</label>
+            <input type="text" id="inputAuthUser" placeholder="Tu usuario" autocomplete="username" required>
+          </div>
+
+          <div class="form-group">
+            <label for="inputAuthPass">Contraseña</label>
+            <div class="auth-password-wrap">
+              <input type="password" id="inputAuthPass" placeholder="••••••••" autocomplete="current-password" required>
+              <button type="button" id="btnToggleAuthPass" class="auth-pass-toggle" onclick="togglePasswordAuth()" aria-label="Mostrar u ocultar contraseña">Ver</button>
+            </div>
+            <small class="form-help" id="authPassHelp" style="display: none;">Mínimo 6 caracteres.</small>
+          </div>
+
+          <div class="auth-submit-stack">
+            <button type="submit" id="btnAuthSubmit" class="btn btn-primary btn-block">Iniciar Sesión</button>
+            <button type="button" id="btnModoDemo" class="btn btn-secondary btn-block" style="display: none;" onclick="entrarModoDemo()">Entrar en Modo Demo</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <div class="app-container" id="appContainer" style="display: none;">
     <!-- Barra Lateral de Navegación -->
     <aside class="sidebar">
       <div class="sidebar-header">
@@ -35,6 +110,14 @@
         <button class="nav-item" data-page="vincular" onclick="navegar('vincular')">
           <span class="nav-icon"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0"/></svg></span>
           <span>Vincular ESP32</span>
+        </button>
+        <button class="nav-item" data-page="habitacion" onclick="navegar('habitacion')">
+          <span class="nav-icon"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg></span>
+          <span>Habitación</span>
+        </button>
+        <button class="nav-item" data-page="tienda" onclick="navegar('tienda')">
+          <span class="nav-icon"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"/></svg></span>
+          <span>Tienda y Logros</span>
         </button>
 
         <div class="nav-section-title">USUARIO</div>
@@ -122,7 +205,7 @@
         <div class="section-header">
           <div>
             <h3>Plantas en Monitoreo</h3>
-            <p>Datos actualizados automáticamente desde las lecturas de los dispositivos ESP32</p>
+            <p>Estado actualizado automáticamente según las mediciones de cada planta</p>
           </div>
           <button class="btn btn-secondary" onclick="sincronizarDashboard()">
             Actualizar ahora
@@ -187,20 +270,20 @@
           <!-- Aprovisionamiento Bluetooth BLE / GATT -->
           <div class="card">
             <div class="card-header">
-              <h3>Conexión Bluetooth y Aprovisionamiento Wi-Fi (GATT)</h3>
-              <p>Escanea dispositivos ESP32 a tu alrededor y transmíteles las credenciales de tu red local mediante Bluetooth GATT.</p>
+              <h3>1. Conectar tu Matera por Bluetooth</h3>
+              <p>Busca tu matera cercana y envíale el nombre y contraseña de tu Wi-Fi para que pueda conectarse sola.</p>
             </div>
             <div class="card-body">
               <div class="ble-actions">
                 <button type="button" class="btn btn-secondary" id="btnScanBle" onclick="iniciarEscaneoBluetooth()">
-                  Escanear Dispositivos Bluetooth (BLE)
+                  Buscar Matera por Bluetooth
                 </button>
-                <span class="ble-status-text" id="bleScanStatus">Bluetooth listo para escanear</span>
+                <span class="ble-status-text" id="bleScanStatus">Listo para buscar dispositivos cercanos</span>
               </div>
 
               <!-- Lista de dispositivos detectados a su alrededor -->
               <div id="bleDevicesContainer" class="ble-devices-container" style="display: none;">
-                <label class="form-label-sub">Dispositivos detectados en las inmediaciones:</label>
+                <label class="form-label-sub">Dispositivos cercanos encontrados:</label>
                 <div id="bleDevicesList" class="ble-devices-list"></div>
               </div>
 
@@ -209,26 +292,26 @@
                 <div class="gatt-panel-header">
                   <div>
                     <strong>Conectado por Bluetooth</strong>
-                    <p id="lblBleDevConectado" class="text-muted">ESP32 seleccionado</p>
+                    <p id="lblBleDevConectado" class="text-muted">Matera seleccionada</p>
                   </div>
-                  <span class="badge badge-scope">GATT Activo</span>
+                  <span class="badge badge-scope">Listo para configurar</span>
                 </div>
 
                 <form id="formGattWifi" onsubmit="enviarCredencialesGatt(event)">
                   <div class="form-group">
-                    <label for="inputWifiSsid">Red Wi-Fi (SSID)</label>
-                    <input type="text" id="inputWifiSsid" placeholder="Ej: RedHogar_2.4G" value="Invernadero_WiFi" required>
+                    <label for="inputWifiSsid">Nombre de tu red Wi-Fi (2.4 GHz)</label>
+                    <input type="text" id="inputWifiSsid" placeholder="Ej: MiCasa_WiFi" required>
                   </div>
 
                   <div class="form-group">
-                    <label for="inputWifiPass">Contraseña de la red Wi-Fi</label>
-                    <input type="password" id="inputWifiPass" placeholder="Contraseña de tu red Wi-Fi" value="plantolNet2026" required>
-                    <small class="form-help">Se transmitirá de forma cifrada al ESP32 mediante la característica GATT de aprovisionamiento.</small>
+                    <label for="inputWifiPass">Contraseña de tu red Wi-Fi</label>
+                    <input type="password" id="inputWifiPass" placeholder="Ingresa la contraseña de tu Wi-Fi" required>
+                    <small class="form-help">Se enviará directamente a tu matera por Bluetooth para conectarla a tu red local.</small>
                   </div>
 
                   <div class="form-actions">
                     <button type="submit" class="btn btn-primary" id="btnEnviarGatt">
-                      Enviar Credenciales por GATT
+                      Conectar Matera al Wi-Fi
                     </button>
                   </div>
                 </form>
@@ -241,8 +324,8 @@
           <!-- Vincular Dispositivo en Red a Planta -->
           <div class="card">
             <div class="card-header">
-              <h3>Dispositivos ESP32 Disponibles en la Red</h3>
-              <p>Sensores conectados a tu red local listos para asociarse a tus plantas con un solo clic.</p>
+              <h3>2. Asignar Sensor a tu Planta</h3>
+              <p>Una vez conectada al Wi-Fi, elige a qué planta pertenece cada matera.</p>
             </div>
             <div class="card-body">
               <div class="available-devices-summary" id="boxDispositivosEnRed">
@@ -287,14 +370,13 @@
         </div>
       </section>
 
-      <!-- SECCIÓN 5: CUENTA Y AUTENTICACIÓN (R7) -->
+      <!-- SECCIÓN 5: CUENTA Y PERFIL (Solo usuarios autenticados) -->
       <section id="page-cuenta" class="page-section">
-        <div class="card-form-container">
-          <!-- Sesión actual / Usuario activo -->
+        <div class="card-form-container single-column">
           <div class="card">
             <div class="card-header">
               <h3>Sesión Activa</h3>
-              <p>Información de identidad y token JWT de usuario.</p>
+              <p>Tu cuenta personal en Plantol y opciones técnicas avanzadas.</p>
             </div>
             <div class="card-body">
               <div class="user-profile-view">
@@ -310,46 +392,143 @@
                   <span class="profile-label">ID de Usuario:</span>
                   <span class="profile-val" id="profileId">--</span>
                 </div>
-                <div class="profile-row">
-                  <span class="profile-label">Alcance (Scope):</span>
-                  <span class="badge badge-scope">usuario</span>
-                </div>
               </div>
 
-              <div class="token-container">
-                <label>Token JWT Actual:</label>
-                <textarea id="tokenTextarea" readonly rows="3" class="token-box"></textarea>
-                <button class="btn btn-secondary btn-sm" onclick="copiarToken()">Copiar Token</button>
+              <div class="form-actions" style="margin-top: 18px;">
+                <button type="button" class="btn btn-secondary btn-danger-hover" onclick="cerrarSesion()">Cerrar Sesión</button>
               </div>
-            </div>
-          </div>
 
-          <!-- Iniciar Sesión o Registrarse con otro usuario -->
-          <div class="card">
-            <div class="card-header">
-              <h3>Cambiar de Usuario o Registrarse</h3>
-              <p>Prueba la regla de dominio: "un usuario solo ve sus propias plantas".</p>
-            </div>
-            <div class="card-body">
-              <form id="formAuth" onsubmit="iniciarSesion(event)">
-                <div class="form-group">
-                  <label for="inputAuthUser">Nombre de usuario</label>
-                  <input type="text" id="inputAuthUser" placeholder="felipe o carlos" required>
+              <details class="tech-details" style="margin-top: 16px;">
+                <summary>Opciones avanzadas de desarrollador (Token de acceso)</summary>
+                <div class="token-container" style="margin-top: 10px;">
+                  <label>Token JWT Actual (Scope: usuario):</label>
+                  <textarea id="tokenTextarea" readonly rows="3" class="token-box"></textarea>
+                  <button class="btn btn-secondary btn-sm" onclick="copiarToken()">Copiar Token</button>
                 </div>
-                <div class="form-group">
-                  <label for="inputAuthPass">Contraseña</label>
-                  <input type="password" id="inputAuthPass" placeholder="plantol123" required>
-                </div>
-
-                <div class="form-actions two-buttons">
-                  <button type="submit" class="btn btn-primary">Iniciar Sesión</button>
-                  <button type="button" class="btn btn-secondary" onclick="registrarNuevoUsuario()">Registrar Nuevo</button>
-                </div>
-              </form>
+              </details>
             </div>
           </div>
         </div>
       </section>
+      <!-- SECCIÓN 6: HABITACIÓN VIRTUAL PERSONALIZABLE -->
+      <section id="page-habitacion" class="page-section">
+        <div class="room-layout">
+          <div class="card room-stage-card">
+            <div class="card-header room-stage-header">
+              <div>
+                <h3>Tu Rincón Botánico</h3>
+                <p>Escena viva conectada a tus plantas reales y a los objetos equipados de tu inventario.</p>
+              </div>
+              <div id="roomPlantSummaryPill" class="room-plant-summary-pill">Cargando plantas...</div>
+            </div>
+            <div class="card-body">
+              <div id="virtualRoomCanvas" class="virtual-room-scene">
+                <p class="text-muted">Cargando habitación...</p>
+              </div>
+              <div id="roomPlantsLegend" class="room-plants-legend"></div>
+            </div>
+          </div>
+
+          <div class="card room-customizer-card">
+            <div class="card-header">
+              <h3>Personalizar e Inventario</h3>
+              <p>Elige una categoría y coloca, cambia o retira objetos reales de tu inventario.</p>
+            </div>
+            <div class="card-body">
+              <div id="roomCategoryTabs" class="room-category-tabs" role="tablist" aria-label="Categorías de habitación"></div>
+              <div id="roomSlotsOverview" class="room-slots-overview"></div>
+              <div id="roomCustomizerList" class="room-customizer-list">
+                <p class="text-muted">Cargando tu inventario...</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECCIÓN 7: TIENDA, MISIONES, LOGROS Y PROGRESIÓN -->
+      <section id="page-tienda" class="page-section">
+        <div class="card" style="margin-bottom: 20px;">
+          <div class="card-body progression-banner" id="progressionBanner">
+            <div>
+              <span class="badge badge-scope" id="progNivelBadge">Nivel 1</span>
+              <h3 id="progTitulo" style="margin-top: 6px;">Semilla Curiosa</h3>
+              <p class="text-muted text-sm" id="progXpTexto">0 / 100 XP para el siguiente nivel</p>
+              <div class="hp-progress" style="margin-top: 8px; max-width: 340px;">
+                <div class="hp-fill hp-high" id="progXpBar" style="width: 0%;"></div>
+              </div>
+            </div>
+            <div class="metric-card" style="margin: 0; min-width: 180px;">
+              <div class="metric-body">
+                <span class="metric-label">Monedas de Cuidado</span>
+                <strong class="metric-value" id="tiendaMonedasVal">0</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card-form-container" style="margin-bottom: 24px;">
+          <div class="card">
+            <div class="card-header">
+              <h3>Misiones Activas</h3>
+              <p>Completa objetivos reales cuidando tus plantas para ganar monedas y experiencia.</p>
+            </div>
+            <div class="card-body" id="listaMisiones">
+              <p class="text-muted">Cargando misiones...</p>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h3>Logros Botánicos</h3>
+              <p>Hitos permanentes desbloqueados en tu trayectoria.</p>
+            </div>
+            <div class="card-body" id="listaLogros">
+              <p class="text-muted">Cargando logros...</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header shop-card-header">
+            <div>
+              <h3>Tienda de Decoración y Macetas</h3>
+              <p>Adquiere objetos respaldados por tu cuidado real y equípalos en tu habitación virtual.</p>
+            </div>
+            <div class="shop-collection-box">
+              <div class="shop-collection-meta">
+                <span>Colección</span>
+                <strong id="shopCollectionCount">0 / 0</strong>
+              </div>
+              <div class="hp-progress shop-collection-bar">
+                <div class="hp-fill hp-high" id="shopCollectionBar" style="width: 0%;"></div>
+              </div>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="shop-toolbar">
+              <div id="shopCategoryTabs" class="room-category-tabs" role="tablist" aria-label="Categorías de tienda"></div>
+              <div class="shop-balance-chip" id="shopBalanceChip">Saldo: <strong>0</strong> monedas</div>
+            </div>
+            <div id="catalogoTiendaGrid" class="shop-grid">
+              <p class="text-muted">Cargando catálogo...</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- MODAL DE VISTA PREVIA DE OBJETO DE TIENDA -->
+      <div id="modalPreviewTienda" class="modal-backdrop" style="display: none;" onclick="cerrarPreviewTienda(event)">
+        <div class="modal-dialog shop-preview-dialog" onclick="event.stopPropagation()">
+          <div class="modal-header">
+            <div>
+              <h3 id="previewTiendaTitulo">Vista Previa</h3>
+              <p id="previewTiendaSub">Inspección del objeto</p>
+            </div>
+            <button class="modal-close" onclick="cerrarPreviewTienda()">&times;</button>
+          </div>
+          <div class="modal-body" id="previewTiendaBody"></div>
+        </div>
+      </div>
     </main>
   </div>
 
@@ -370,7 +549,7 @@
               <tr>
                 <th>Fecha y Hora</th>
                 <th>Luminosidad</th>
-                <th>Humedad</th>
+                <th>Humedad Suelo</th>
                 <th>Temperatura</th>
                 <th>Estado</th>
               </tr>
@@ -434,5 +613,6 @@
 
   <!-- SCRIPT ASÍNCRONO DEL FRONTEND -->
   <script src="app.js" defer></script>
+  <script src="gamificacion.js" defer></script>
 </body>
 </html>

@@ -84,6 +84,12 @@ class DispositivoNoEncontradoError(DominioError):
         super().__init__(f"Dispositivo '{dispositivo_id}' no encontrado.")
 
 
+class DispositivoNoAutorizadoError(DominioError):
+    def __init__(self, dispositivo_id: str) -> None:
+        self.dispositivo_id = dispositivo_id
+        super().__init__(f"No tienes autorización para usar o vincular el dispositivo '{dispositivo_id}'.")
+
+
 class DispositivoNoVinculadoError(DominioError):
     def __init__(self, dispositivo_id: str) -> None:
         self.dispositivo_id = dispositivo_id
@@ -144,9 +150,10 @@ class DiagnosticoPlanta:
     fecha_hora: Optional[str] = None
     hp: int = 100
     estado_emocional: str = EMOCION_RADIANTE
+    resumen_luminico: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        data = {
             "especie": self.especie,
             "estado_global": self.estado_global,
             "fecha_hora": self.fecha_hora,
@@ -162,6 +169,9 @@ class DiagnosticoPlanta:
                 for p in self.parametros
             ],
         }
+        if self.resumen_luminico is not None:
+            data["resumen_luminico"] = self.resumen_luminico
+        return data
 
 
 @dataclass(frozen=True)
@@ -174,6 +184,7 @@ class Lectura:
     temperatura: float
     id: Optional[int] = None
     planta_id: Optional[int] = None
+    clave_idempotencia: Optional[str] = None
     humedad_suelo: Optional[float] = None
 
 
@@ -188,6 +199,7 @@ class TransaccionPuntos:
     tipo: str  # TIPO_RECOMPENSA o TIPO_PENALIZACION
     id: Optional[int] = None
     planta_id: Optional[int] = None
+    clave_idempotencia: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -254,3 +266,5 @@ class Dispositivo:
     planta_id: Optional[int] = None
     ultimo_contacto: Optional[str] = None
     estado_conexion: str = CONECTADO
+    es_demo: bool = False
+    usuario_id: Optional[int] = None

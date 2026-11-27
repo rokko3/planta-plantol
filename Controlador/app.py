@@ -30,7 +30,9 @@ from Controlador.persistencia import (
     TablaReferenciaBD,
     TablaReferenciaCSV,
 )
+from Controlador.persistencia_gamificacion import RepositorioGamificacionAvanzadaSQLite
 from Modelo.entidades import CONECTADO, Dispositivo, Lectura, Planta, SIN_RESPUESTA, Usuario
+from Modelo.gamificacion_avanzada import CasoUsoGamificacionAvanzada
 from Modelo.negocio import (
     CasoUsoAutenticacion,
     CasoUsoConsultarEstado,
@@ -81,6 +83,8 @@ def sembrar_datos_iniciales(
                     mac=mac,
                     ultimo_contacto=datetime.datetime.now().isoformat(),
                     estado_conexion=estado,
+                    es_demo=True,
+                    usuario_id=usuario.id,
                 )
             )
 
@@ -134,17 +138,21 @@ def crear_app(
     """
     Fábrica de composición. Ensambla adaptadores con puertos según configuración.
     """
+    es_modo_demo = bool(seed_demo or os.environ.get("PLANTOL_DEMO", "0").strip() == "1")
+
     # 1. Configuración de rutas (Ruta absoluta calculada desde la raíz del proyecto)
     if ruta_db is None:
         carpeta_data = os.path.join(RAIZ_PROYECTO, "data")
         os.makedirs(carpeta_data, exist_ok=True)
-        ruta_db_default = os.path.join(carpeta_data, "matera.db")
+        nombre_db_default = "matera_demo.db" if es_modo_demo else "matera.db"
+        ruta_db_default = os.path.join(carpeta_data, nombre_db_default)
 
         # Migración segura: si existe matera.db en la raíz y no en data/, trasladar sin pérdida
-        ruta_db_raiz = os.path.join(RAIZ_PROYECTO, "matera.db")
-        if os.path.exists(ruta_db_raiz) and not os.path.exists(ruta_db_default):
-            import shutil
-            shutil.move(ruta_db_raiz, ruta_db_default)
+        if not es_modo_demo:
+            ruta_db_raiz = os.path.join(RAIZ_PROYECTO, "matera.db")
+            if os.path.exists(ruta_db_raiz) and not os.path.exists(ruta_db_default):
+                import shutil
+                shutil.move(ruta_db_raiz, ruta_db_default)
 
         ruta_db = os.environ.get("DB_PATH", ruta_db_default)
     else:
@@ -169,7 +177,7 @@ def crear_app(
 
     # 3. Adaptadores de salida
     historial_lecturas = HistorialLecturasBD(ruta_db=ruta_db)
-    repositorio_sqlite = RepositorioSQLite(ruta_db=ruta_db)
+    repositorio_sqlite = RepositorioSQLite(ruta_db=ruta_db, incluir_demo=es_modo_demo)
     repositorio_gamificacion = RepositorioGamificacionBD(ruta_db=ruta_db)
     jwt_secret = secret_key or os.environ.get("JWT_SECRET_KEY", "plantol_super_secret_key_2026_arquitectura_hexagonal_segura_32b")
     emisor_token = ServicioJWT(clave_secreta=jwt_secret)
@@ -207,9 +215,16 @@ def crear_app(
         repo_plantas=repositorio_sqlite,
         validador=validador_estado,
     )
+    repo_gamificacion_avanzada = RepositorioGamificacionAvanzadaSQLite(ruta_db=ruta_db)
+    caso_gamificacion_avanzada = CasoUsoGamificacionAvanzada(
+        repo_base=repositorio_gamificacion,
+        repo_avanzada=repo_gamificacion_avanzada,
+        repo_plantas=repositorio_sqlite,
+        consultar_estado_port=caso_consultar_estado,
+    )
 
     # 5. Siembra de datos iniciales (solo si se solicita explícitamente para demos/tests)
-    if seed_demo:
+    if seed_demo or os.environ.get("PLANTOL_DEMO", "0").strip() == "1":
         sembrar_datos_iniciales(
             repo_sqlite=repositorio_sqlite,
             historial_bd=historial_lecturas,
@@ -229,6 +244,7 @@ def crear_app(
         emisor_token=emisor_token,
         tipo_fuente_actual=tipo_tabla,
         caso_gamificacion=caso_gamificacion,
+        caso_gamificacion_avanzada=caso_gamificacion_avanzada,
     )
 
     # 7. Configuración de Flask y Frontend (Vista)
